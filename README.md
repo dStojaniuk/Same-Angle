@@ -17,6 +17,6 @@ White marks an editable pixel. Black protects the original color. Before editing
 
 Run `bun run dev` to start the React frontend with Vite on Bun. Open the local URL printed by Vite. The starter page displays the project name.
 
-Run `bun run check` for the Python checks and PNG round-trip and demo export tests, frontend TypeScript checks and the production build.
+Run `bun run check` for formatting, lint, type checks, the Python tests, and the frontend production build. See [Contributing](CONTRIBUTING.md) for individual commands.
 
 See the [architecture](docs/architecture.md) for the workspace boundaries and the [visual evaluation plan](evals/README.md) for the first room trial.

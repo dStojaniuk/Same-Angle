@@ -1,0 +1,11 @@
+{
+  "name": "@same-angle/backend",
+  "private": true,
+  "scripts": {
+    "demo": "uv run --locked python examples/mask_demo.py",
+    "check": "uv sync --locked && bun run lint && bun run typecheck && bun run test",
+    "lint": "uv run --locked ruff format --check . && uv run --locked ruff check .",
+    "typecheck": "uv run --locked mypy src examples tests",
+    "test": "uv run --locked pytest -q"
+  }
+}

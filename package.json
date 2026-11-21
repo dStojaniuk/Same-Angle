@@ -1,0 +1,27 @@
+{
+  "name": "same-angle",
+  "description": "Room redesign experiments that preserve the original camera perspective.",
+  "author": {
+    "name": "dStojaniuk",
+    "url": "https://github.com/dStojaniuk"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dStojaniuk/Same-Angle.git"
+  },
+  "homepage": "https://github.com/dStojaniuk/Same-Angle#readme",
+  "bugs": {
+    "url": "https://github.com/dStojaniuk/Same-Angle/issues"
+  },
+  "private": true,
+  "packageManager": "bun@1.4.3",
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "dev": "turbo run dev",
+    "demo": "turbo run demo",
+    "check": "turbo run check"
+  },
+  "devDependencies": {
+    "turbo": "2.11.12"
+  }
+}

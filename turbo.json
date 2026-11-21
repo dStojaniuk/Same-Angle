@@ -3,6 +3,10 @@
   "tasks": {
     "dev": { "cache": false, "persistent": true },
     "demo": { "cache": false },
+    "format": { "cache": false },
+    "format:check": { "cache": false },
+    "lint": { "cache": false },
+    "lint:fix": { "cache": false },
     "check": { "cache": false }
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
+import { BedProjection } from "./BedPreview";
 import {
   MAX_OUTLINE_POINTS,
   clientToPhoto,
@@ -15,6 +16,12 @@ type PhotoViewportProps = {
   photo: RoomPhoto;
   outline: Point[];
   onEdit: (points: Point[]) => void;
+  bedPreview?: {
+    faces: Point[][];
+    guides: [Point, Point][];
+    anchor: Point | null;
+    onPlace: (point?: Point) => void;
+  };
   tool: "points" | "pan" | "outline";
   onGeometryMove: (moving: boolean) => void;
   zoom: number;
@@ -45,8 +52,10 @@ export function PhotoViewport({
   zoom,
   comparison,
   grid,
+  bedPreview,
 }: PhotoViewportProps) {
   const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
+  const [bedCursor, setBedCursor] = useState<Point | null>(null);
 
   const frame = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -56,7 +65,7 @@ export function PhotoViewport({
   );
   const drag = useRef<Drag | null>(null);
 
-  const editing = comparison === null;
+  const editing = comparison === null && !bedPreview;
   const panning = tool === "pan";
   const movingOutline = tool === "outline";
 
@@ -163,7 +172,7 @@ export function PhotoViewport({
             draggable={false}
             style={comparison ? { clipPath: `inset(0 ${100 - comparison.split}% 0 0)` } : undefined}
           />
-          {editing ? (
+          {editing && (
             <>
               {!grid && tool === "points" && (
                 <button
@@ -263,7 +272,61 @@ export function PhotoViewport({
                   />
                 ))}
             </>
-          ) : (
+          )}
+          {bedPreview && (
+            <>
+              <BedProjection photo={photo} faces={bedPreview.faces} guides={bedPreview.guides} />
+              {bedCursor && (
+                <span
+                  className="bed-placement-cursor"
+                  aria-hidden="true"
+                  style={{
+                    left: `${(bedCursor.x / photo.width) * 100}%`,
+                    top: `${(bedCursor.y / photo.height) * 100}%`,
+                  }}
+                />
+              )}
+              {!panning && (
+                <button
+                  type="button"
+                  className="place-point"
+                  aria-label="Place bed on the photo"
+                  aria-describedby="bed-help"
+                  onBlur={() => setBedCursor(null)}
+                  onClick={(event) => {
+                    if (event.detail) {
+                      setBedCursor(null);
+                      bedPreview.onPlace(photoPosition(event));
+                    } else {
+                      bedPreview.onPlace(bedCursor ?? undefined);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    const step = arrowSteps.get(event.key);
+                    if (!step) return;
+
+                    event.preventDefault();
+                    const amount = event.shiftKey
+                      ? Math.max(1, Math.round(Math.min(photo.width, photo.height) * 0.015))
+                      : 1;
+                    const origin = bedCursor ??
+                      bedPreview.anchor ?? {
+                        x: photo.width / 2,
+                        y: photo.height * 0.8,
+                      };
+                    const point = limitToPhoto(
+                      { x: origin.x + step.x * amount, y: origin.y + step.y * amount },
+                      photo,
+                    );
+
+                    setBedCursor(point);
+                    bedPreview.onPlace(point);
+                  }}
+                />
+              )}
+            </>
+          )}
+          {comparison && (
             <>
               <img
                 className="photo-layer"

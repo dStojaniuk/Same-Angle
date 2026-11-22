@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
+import { placeBedOnPhoto, projectBed, projectFloorGuides } from "./bed";
+import { BedControls } from "./BedPreview";
+import { createCameraProjection, initialCameraSettings, type CameraSettings } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
 import { renderFloor } from "./floorRender";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
@@ -8,12 +11,14 @@ import { sampleRoom, type RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
+const initialBed = { settings: initialCameraSettings, center: { x: 0, z: 3.8 }, crosswise: false };
 
 type EditorMode =
   | { kind: "outline" }
   | { kind: "grid" }
+  | { kind: "bed" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
-type FocusTarget = "grid" | "sample" | "render" | "slider";
+type FocusTarget = "grid" | "sample" | "render" | "slider" | "camera" | "preview-bed";
 
 type RoomEditorProps = {
   photo: RoomPhoto;
@@ -46,6 +51,8 @@ export function RoomEditor({
   const [zoomIndex, setZoomIndex] = useState(0);
   const [editorMode, setMode] = useState<EditorMode>({ kind: "outline" });
   const [photoTool, setPhotoTool] = useState<"points" | "pan" | "outline">("points");
+  const [bed, setBed] = useState(initialBed);
+  const [placementMessage, setPlacementMessage] = useState("");
   const [split, setSplit] = useState(50);
   const [movingGeometry, setMovingGeometry] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -66,11 +73,21 @@ export function RoomEditor({
   const corners = draft.corners ?? suggestedCorners;
 
   const historyAvailable =
-    mode.kind !== "comparison" && !rendering && !movingGeometry && !recoveringConflict;
+    (mode.kind === "outline" || mode.kind === "grid") &&
+    !rendering &&
+    !movingGeometry &&
+    !recoveringConflict;
   const validGrid = projectFloor(corners) !== null;
   const sampleComparisonUrl = photo.comparisonUrl;
   const comparison = mode.kind === "comparison" ? { url: mode.url, split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
+  const camera = mode.kind === "bed" ? createCameraProjection(photo, bed.settings) : null;
+  const bedPreview = camera && {
+    faces: projectBed(camera, photo, bed.center, bed.crosswise),
+    guides: projectFloorGuides(camera),
+    anchor: camera.project({ ...bed.center, y: 0 }),
+    onPlace: placeBed,
+  };
 
   const stepHistory = useCallback((type: "undo" | "redo") => {
     dispatch({ type });
@@ -152,6 +169,24 @@ export function RoomEditor({
   function editGrid(next: Point[]) {
     dispatch({ type: "edit", draft: { ...draft, corners: next } });
     setRenderError("");
+  }
+
+  function adjustCamera(key: keyof CameraSettings, value: number) {
+    setBed((current) => ({ ...current, settings: { ...current.settings, [key]: value } }));
+    setPlacementMessage("");
+  }
+
+  function placeBed(point?: Point) {
+    if (!camera) return;
+
+    const placement = placeBedOnPhoto(camera, photo, bed.crosswise, point);
+    if ("message" in placement) {
+      setPlacementMessage(placement.message);
+      return;
+    }
+
+    setBed((current) => ({ ...current, center: placement.center }));
+    setPlacementMessage("");
   }
 
   async function submitFloor() {
@@ -296,6 +331,7 @@ export function RoomEditor({
             outline={outline}
             onEdit={grid ? editGrid : editOutline}
             grid={grid}
+            bedPreview={bedPreview ?? undefined}
             tool={photoTool}
             onGeometryMove={setMovingGeometry}
             zoom={zoomLevels[zoomIndex]}
@@ -351,6 +387,27 @@ export function RoomEditor({
                 </div>
               )}
             </>
+          ) : bedPreview ? (
+            <BedControls
+              settings={bed.settings}
+              message={
+                placementMessage ||
+                (bedPreview.faces.length
+                  ? ""
+                  : "The bed is out of view. Place it on the photo or reset the preview.")
+              }
+              focusHeading={focusAfterSwitch("camera")}
+              onAdjust={adjustCamera}
+              onRotate={() => {
+                setBed((current) => ({ ...current, crosswise: !current.crosswise }));
+                setPlacementMessage("");
+              }}
+              onReset={() => {
+                setBed(initialBed);
+                setPlacementMessage("");
+              }}
+              onBack={() => changeMode({ kind: "outline" }, "preview-bed")}
+            />
           ) : mode.kind === "grid" ? (
             <>
               <h2>Align the floor grid</h2>
@@ -433,6 +490,15 @@ export function RoomEditor({
                 >
                   Adjust perspective grid
                 </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  ref={focusAfterSwitch("preview-bed")}
+                  disabled={movingGeometry}
+                  onClick={() => changeMode({ kind: "bed" }, "camera")}
+                >
+                  Preview a bed
+                </button>
                 {sampleComparisonUrl && (
                   <button
                     type="button"
@@ -451,7 +517,7 @@ export function RoomEditor({
               </div>
             </>
           )}
-          {mode.kind !== "comparison" && (
+          {(mode.kind === "outline" || mode.kind === "grid") && (
             <fieldset className="history-controls" aria-label="Edit history">
               <button
                 type="button"

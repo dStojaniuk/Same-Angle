@@ -243,6 +243,7 @@ h2 {
 
 .photo-layer,
 .outline-overlay,
+.bed-overlay,
 .place-point {
   position: absolute;
   inset: 0;
@@ -251,7 +252,8 @@ h2 {
 }
 
 .photo-layer,
-.outline-overlay {
+.outline-overlay,
+.bed-overlay {
   pointer-events: none;
   user-select: none;
 }
@@ -482,6 +484,104 @@ h2 {
 .grid-corner::before {
   border-radius: 2px;
   background: #ffe3a3;
+}
+
+.bed-placement-cursor {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  translate: -50% -50%;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--ink);
+  pointer-events: none;
+}
+
+.camera-guides {
+  stroke: #b7ffe3;
+  stroke-width: 1;
+  opacity: 0.65;
+  filter: drop-shadow(0 1px 1px #172a2c);
+}
+
+.bed-faces {
+  fill: #c4a878ed;
+  stroke: #382f22;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.bed-faces polygon:first-child {
+  fill: #fff0cfe8;
+}
+
+.editor-panel .bed-scale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #edf3ee;
+  margin-bottom: 12px;
+}
+
+.bed-scale strong {
+  color: var(--accent);
+}
+
+.camera-controls {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.camera-controls label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.camera-controls label span {
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.camera-controls input {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+  min-height: 24px;
+  accent-color: var(--accent);
+}
+
+.editor-panel .bed-status {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.bed-status:empty {
+  margin: 0;
+}
+
+.bed-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.bed-actions button:last-child {
+  grid-column: 1 / -1;
 }
 
 .editor-actions {

@@ -19,6 +19,10 @@ Run `bun run dev` and open the URL printed by Vite. This starts the editor and i
 
 Photos can be up to 25 MiB and 24 megapixels. The editor uses a static sRGB preview for editing, rendering, and comparison. For an animated PNG it uses the default image, or the first frame if there is no separate default image. The outline accepts up to 128 points. **Undo**, **Redo**, and the reset controls cover both the outline and the grid. **Move outline** moves every point together. At higher zoom levels, turn on **Pan** to drag the view. **Download PNG** saves the current render.
 
+Choose **Preview a bed** to arrange a shared bed on one or two photos. Fit each camera, then open **Floor plan** to enter room and bed dimensions, check wall clearance, and move or rotate the bed. The default room dimensions are illustrative. The views and PNG snapshots display **Skala orientacyjna**.
+
+Use **Download scene** to save the room, bed, and camera settings as JSON. To resume, open the same photos in the same order and choose **Load scene**. Scene files store photo names, dimensions, and content fingerprints. Use **Download view PNG** in each view to export the projected bed at the photo’s working resolution. View exports need at least 128 × 40 px to fit the scale label.
+
 Uploaded photos and their floor drafts are saved in this browser. Use **Saved projects** to reopen a photo and continue editing its outline and grid. The original, outline, and grid are stored locally for the address where you opened the editor. Render a saved draft again to get a new PNG.
 
 Run `bun run check` for formatting, lint, type checks, frontend and Python tests, and the frontend production build. See [Contributing](CONTRIBUTING.md) for individual commands.

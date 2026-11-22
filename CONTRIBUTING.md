@@ -16,7 +16,13 @@ Run these commands from the repository root to cover both workspaces. Run the sa
 | `bun run format:check` | Checks formatting without editing files. |
 | `bun run lint` | Runs Oxlint for TypeScript, React Hooks, and JSX accessibility, and Ruff for Python, including import order. |
 | `bun run lint:fix` | Applies safe lint fixes, including Python import sorting. Review the diff and run `bun run format` afterward. |
-| `bun run check` | Runs formatting and lint checks, mypy, TypeScript, the Python tests, and the Vite build. GitHub Actions uses this command. |
+| `bun run check` | Runs formatting and lint checks, mypy, TypeScript, frontend and Python tests, and the Vite build. GitHub Actions uses this command. |
+
+### Frontend tests
+
+Run `bun run test` from `frontend/` for the unit tests. They use Playwright's test runner without starting a browser or server.
+
+From `frontend/`, run `bunx playwright install chromium` once, then `bun run test:e2e`. Playwright starts Vite on port 4182 and the Python renderer on port 8765. It checks the editor with synthetic images. Use those ports for one checkout at a time.
 
 ### VS Code
 

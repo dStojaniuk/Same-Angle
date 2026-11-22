@@ -2,6 +2,7 @@
   "name": "@same-angle/backend",
   "private": true,
   "scripts": {
+    "dev": "uv run --locked python -m uvicorn same_angle.api:app --host 127.0.0.1 --port 8765",
     "demo": "uv run --locked python examples/mask_demo.py",
     "format": "uv run --locked ruff format .",
     "format:check": "uv run --locked ruff format --check .",

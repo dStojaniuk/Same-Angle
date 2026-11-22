@@ -9,3 +9,6 @@ __pycache__/
 node_modules/
 .turbo/
 /frontend/dist/
+
+/frontend/test-results/
+/frontend/playwright-report/

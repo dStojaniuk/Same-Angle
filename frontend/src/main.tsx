@@ -1,10 +1,8 @@
 import { createRoot } from "react-dom/client";
+import { App } from "./App";
+import "./studio.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing application root");
 
-createRoot(root).render(
-  <main>
-    <h1>Same Angle</h1>
-  </main>,
-);
+createRoot(root).render(<App />);

@@ -1,10 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y"],
+  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y", "import"],
   "categories": {
     "correctness": "error"
   },
   "rules": {
+    "import/newline-after-import": "error",
     "react/rules-of-hooks": "error"
   },
   "env": {

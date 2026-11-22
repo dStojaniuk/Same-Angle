@@ -10,6 +10,22 @@ export type CameraSettings = {
   zMeters: number;
 };
 
+const cameraRanges = {
+  fieldOfView: { min: 35, max: 110, step: 1 },
+  yaw: { min: -360, max: 360, step: 1 },
+  tilt: { min: -45, max: 45, step: 1 },
+  roll: { min: -20, max: 20, step: 1 },
+  heightMeters: { min: 0.8, max: 2.4, step: 0.05 },
+  xMeters: { min: -10, max: 10, step: 0.05 },
+  zMeters: { min: -10, max: 15, step: 0.05 },
+} satisfies Record<keyof CameraSettings, { min: number; max: number; step: number }>;
+
+export const cameraFields = Object.keys(cameraRanges) as (keyof CameraSettings)[];
+
+export function cameraRange(key: keyof CameraSettings, hasSecondPhoto: boolean) {
+  return key === "yaw" && !hasSecondPhoto ? { min: -45, max: 45, step: 1 } : cameraRanges[key];
+}
+
 export const initialCameraSettings: CameraSettings = {
   fieldOfView: 72,
   yaw: 0,
@@ -21,6 +37,7 @@ export const initialCameraSettings: CameraSettings = {
 };
 
 export type FloorPoint = { x: number; z: number };
+export type FloorBounds = FloorPoint & { width: number; length: number };
 type WorldPoint = FloorPoint & { y: number };
 
 const radians = Math.PI / 180;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
+import type { ProjectedBedFace } from "./bed";
 import { BedProjection } from "./BedPreview";
 import {
   MAX_OUTLINE_POINTS,
@@ -17,7 +18,7 @@ type PhotoViewportProps = {
   outline: Point[];
   onEdit: (points: Point[]) => void;
   bedPreview?: {
-    faces: Point[][];
+    faces: ProjectedBedFace[];
     guides: [Point, Point][];
     anchor: Point | null;
     onPlace: (point?: Point) => void;

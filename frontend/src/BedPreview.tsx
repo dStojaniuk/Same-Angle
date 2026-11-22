@@ -1,24 +1,25 @@
 import { useRef } from "react";
 
-import { bedSize } from "./bed";
-import type { CameraSettings } from "./camera";
+import { bedPaint, type BedSize, type ProjectedBedFace } from "./bed";
+import { cameraRange, type CameraSettings } from "./camera";
 import type { PhotoSize, Point } from "./outline";
 
 const cameraControls = [
-  { key: "fieldOfView", label: "Horizontal field of view", min: 35, max: 110, step: 1, unit: "°" },
-  { key: "yaw", label: "Turn", min: -360, max: 360, step: 1, unit: "°" },
-  { key: "tilt", label: "Tilt", min: -45, max: 45, step: 1, unit: "°" },
-  { key: "roll", label: "Roll", min: -20, max: 20, step: 1, unit: "°" },
-  { key: "heightMeters", label: "Camera height", min: 0.8, max: 2.4, step: 0.05, unit: " m" },
-  { key: "xMeters", label: "Camera X in room", min: -10, max: 10, step: 0.05, unit: " m" },
-  { key: "zMeters", label: "Camera Z in room", min: -10, max: 15, step: 0.05, unit: " m" },
+  { key: "fieldOfView", label: "Horizontal field of view", unit: "°" },
+  { key: "yaw", label: "Turn", unit: "°" },
+  { key: "tilt", label: "Tilt", unit: "°" },
+  { key: "roll", label: "Roll", unit: "°" },
+  { key: "heightMeters", label: "Camera height", unit: " m" },
+  { key: "xMeters", label: "Camera X in room", unit: " m" },
+  { key: "zMeters", label: "Camera Z in room", unit: " m" },
 ] as const;
 
 type BedViewsProps = {
-  view: "first" | "second";
+  view: "first" | "second" | "plan";
   hasSecondPhoto: boolean;
   photoError: string;
-  onSelectView: (view: "first" | "second") => void;
+  openingSecondPhoto: boolean;
+  onSelectView: (view: "first" | "second" | "plan") => void;
   onOpenSecondPhoto: (file: File) => void;
 };
 
@@ -26,6 +27,7 @@ export function BedViews({
   view,
   hasSecondPhoto,
   photoError,
+  openingSecondPhoto,
   onSelectView,
   onOpenSecondPhoto,
 }: BedViewsProps) {
@@ -33,16 +35,16 @@ export function BedViews({
 
   return (
     <div className="bed-view-controls">
-      {hasSecondPhoto && (
-        <fieldset className="bed-view-switch" aria-label="Room views">
-          <button
-            type="button"
-            className="secondary-button"
-            aria-pressed={view === "first"}
-            onClick={() => onSelectView("first")}
-          >
-            First view
-          </button>
+      <fieldset className="bed-view-switch" aria-label="Room views">
+        <button
+          type="button"
+          className="secondary-button"
+          aria-pressed={view === "first"}
+          onClick={() => onSelectView("first")}
+        >
+          First view
+        </button>
+        {hasSecondPhoto && (
           <button
             type="button"
             className="secondary-button"
@@ -51,11 +53,20 @@ export function BedViews({
           >
             Second view
           </button>
-        </fieldset>
-      )}
+        )}
+        <button
+          type="button"
+          className="secondary-button"
+          aria-pressed={view === "plan"}
+          onClick={() => onSelectView("plan")}
+        >
+          Floor plan
+        </button>
+      </fieldset>
       <input
         ref={fileInput}
         type="file"
+        disabled={openingSecondPhoto}
         aria-label="Second room photo"
         accept="image/jpeg,image/png,.jpg,.jpeg,.png"
         hidden
@@ -65,8 +76,17 @@ export function BedViews({
           if (file) onOpenSecondPhoto(file);
         }}
       />
-      <button type="button" className="secondary-button" onClick={() => fileInput.current?.click()}>
-        {hasSecondPhoto ? "Replace second photo" : "Add second photo"}
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={openingSecondPhoto}
+        onClick={() => fileInput.current?.click()}
+      >
+        {openingSecondPhoto
+          ? "Opening photo…"
+          : hasSecondPhoto
+            ? "Replace second photo"
+            : "Add second photo"}
       </button>
       {photoError && (
         <p className="field-error" role="alert">
@@ -78,6 +98,7 @@ export function BedViews({
 }
 
 type BedControlsProps = {
+  size: BedSize;
   settings: CameraSettings;
   hasSecondPhoto: boolean;
   message: string;
@@ -89,6 +110,7 @@ type BedControlsProps = {
 };
 
 export function BedControls({
+  size,
   settings,
   hasSecondPhoto,
   message,
@@ -106,7 +128,7 @@ export function BedControls({
       <p className="bed-scale">
         <strong lang="pl">Skala orientacyjna</strong>
         <span>
-          {bedSize.width} × {bedSize.length} × {bedSize.height} m
+          {size.width} × {size.length} × {size.height} m
         </span>
       </p>
       <p id="bed-help">
@@ -117,24 +139,27 @@ export function BedControls({
         the placement point and hold Shift for larger steps.
       </p>
       <fieldset className="camera-controls" aria-label="Camera settings">
-        {cameraControls.map(({ key, label, min, max, step, unit }) => (
-          <label key={key}>
-            {label}
-            <span aria-hidden="true">
-              {settings[key]}
-              {unit}
-            </span>
-            <input
-              type="range"
-              min={key === "yaw" && !hasSecondPhoto ? -45 : min}
-              max={key === "yaw" && !hasSecondPhoto ? 45 : max}
-              step={step}
-              value={settings[key]}
-              aria-valuetext={`${settings[key]}${unit}`}
-              onChange={(event) => onAdjust(key, event.currentTarget.valueAsNumber)}
-            />
-          </label>
-        ))}
+        {cameraControls.map(({ key, label, unit }) => {
+          const { min, max, step } = cameraRange(key, hasSecondPhoto);
+          return (
+            <label key={key}>
+              {label}
+              <span aria-hidden="true">
+                {settings[key]}
+                {unit}
+              </span>
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={settings[key]}
+                aria-valuetext={`${settings[key]}${unit}`}
+                onChange={(event) => onAdjust(key, event.currentTarget.valueAsNumber)}
+              />
+            </label>
+          );
+        })}
       </fieldset>
       <output className="bed-status field-error">{message}</output>
       <div className="bed-actions">
@@ -155,7 +180,7 @@ export function BedControls({
 type BedProjectionProps = {
   photo: PhotoSize;
   guides: [Point, Point][];
-  faces: Point[][];
+  faces: ProjectedBedFace[];
 };
 
 export function BedProjection({ photo, guides, faces }: BedProjectionProps) {
@@ -179,11 +204,12 @@ export function BedProjection({ photo, guides, faces }: BedProjectionProps) {
           />
         ))}
       </g>
-      <g className="bed-faces">
-        {faces.map((face, index) => (
+      <g className="bed-faces" stroke={bedPaint.outline}>
+        {faces.map(({ kind, points }, index) => (
           <polygon
             key={index}
-            points={face.map(({ x, y }) => `${x},${y}`).join(" ")}
+            fill={bedPaint[kind]}
+            points={points.map(({ x, y }) => `${x},${y}`).join(" ")}
             vectorEffect="non-scaling-stroke"
           />
         ))}

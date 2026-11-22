@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { projectBed } from "../../src/bed";
+import { projectBed, projectFloorGuides } from "../../src/bed";
 import { createCameraProjection, initialCameraSettings } from "../../src/camera";
 
 const photo = { width: 1000, height: 600 };
@@ -57,13 +57,15 @@ test("draws the near side and top of the bed with its width on the floor", () =>
   const camera = createCameraProjection(photo, level);
   const center = { x: 0, z: 5 };
   const [top, near] = projectBed(camera, photo, center, false);
-  expect(near[0].x).toBeCloseTo(400);
-  expect(near[1].x).toBeCloseTo(600);
-  expect(near[0].y).toBeCloseTo(487.5);
-  expect(top[0].y).toBeCloseTo(418.75);
+  expect(near.points[0].x).toBeCloseTo(400);
+  expect(near.points[1].x).toBeCloseTo(600);
+  expect(near.points[0].y).toBeCloseTo(487.5);
+  expect(top.points[0].y).toBeCloseTo(418.75);
 
   const [rotated] = projectBed(camera, photo, center, true);
-  expect(rotated[1].x - rotated[0].x).toBeGreaterThan(top[1].x - top[0].x);
+  expect(rotated.points[1].x - rotated.points[0].x).toBeGreaterThan(
+    top.points[1].x - top.points[0].x,
+  );
   expect(projectBed(camera, photo, { x: 0, z: -1.2 }, false)).toEqual([]);
 });
 
@@ -120,4 +122,39 @@ test("clips a face with corners behind the second camera", () => {
   expect(face.map(({ y }) => Math.round(y)).sort((a, b) => a - b)).toEqual([
     1050, 1050, 7800, 7800,
   ]);
+});
+
+test("keeps the floor guides registered when the room and camera have a new origin", () => {
+  const size = { width: 1440, height: 960 };
+  const room = { x: -1.6, z: 0, width: 3.2, length: 7.6 };
+  const settings = { ...initialCameraSettings, yaw: 0 };
+  const original = projectFloorGuides(createCameraProjection(size, settings), room);
+  const moved = projectFloorGuides(
+    createCameraProjection(size, { ...settings, xMeters: 7, zMeters: 12 }),
+    { ...room, x: room.x + 7, z: room.z + 12 },
+  );
+
+  expect(original.length).toBeGreaterThan(0);
+  expect(moved).toHaveLength(original.length);
+  for (const [index, [start, end]] of original.entries()) {
+    expect(moved[index][0].x).toBeCloseTo(start.x);
+    expect(moved[index][0].y).toBeCloseTo(start.y);
+    expect(moved[index][1].x).toBeCloseTo(end.x);
+    expect(moved[index][1].y).toBeCloseTo(end.y);
+  }
+});
+
+test("keeps the side face identified when the near plane clips away the top", () => {
+  const size = { width: 600, height: 1000 };
+  const camera = createCameraProjection(size, {
+    ...initialCameraSettings,
+    tilt: 45,
+    heightMeters: 0.8,
+  });
+  const faces = projectBed(camera, size, { x: 0.35, z: -0.2 }, false, {
+    width: 0.5,
+    length: 0.5,
+    height: 0.75,
+  });
+  expect(faces.map((face) => face.kind)).toEqual(["side"]);
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { initialCameraSettings, type CameraSettings } from "./camera";
 import { openRoomPhoto, type RoomPhoto } from "./photo";
+import type { OpenRoomView } from "./roomScene";
 
 const initialSecondCamera = { ...initialCameraSettings, yaw: 180, zMeters: 7.6 };
 
@@ -13,8 +14,9 @@ export function useBedViews(firstPhoto: RoomPhoto) {
   const [secondCamera, setSecondCamera] = useState(initialSecondCamera);
   const [view, setView] = useState<RoomView>("first");
   const [photoError, setPhotoError] = useState("");
+  const [openingSecondPhoto, setOpeningSecondPhoto] = useState(false);
 
-  const upload = useRef(0);
+  const upload = useRef<symbol | null>(null);
   const selection = useRef<{ view: RoomView }>({ view: "first" });
   const photoUrl = useRef<string | null>(null);
 
@@ -25,7 +27,7 @@ export function useBedViews(firstPhoto: RoomPhoto) {
 
   useEffect(() => {
     return () => {
-      upload.current += 1;
+      upload.current = null;
       if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
     };
   }, []);
@@ -36,8 +38,12 @@ export function useBedViews(firstPhoto: RoomPhoto) {
   }
 
   async function openSecondPhoto(file: File): Promise<boolean> {
-    const request = ++upload.current;
+    if (upload.current) return false;
+
+    const request = Symbol();
     const requestedFrom = selection.current;
+    upload.current = request;
+    setOpeningSecondPhoto(true);
     setPhotoError("");
 
     try {
@@ -61,6 +67,11 @@ export function useBedViews(firstPhoto: RoomPhoto) {
         );
       }
       return false;
+    } finally {
+      if (upload.current === request) {
+        upload.current = null;
+        setOpeningSecondPhoto(false);
+      }
     }
   }
 
@@ -72,15 +83,33 @@ export function useBedViews(firstPhoto: RoomPhoto) {
     setCamera(isSecond ? initialSecondCamera : initialCameraSettings);
   }
 
+  function restoreCameras(cameras: CameraSettings[], expectedSecondUrl: string | null) {
+    if (upload.current) {
+      throw new Error("Wait for the photo to finish opening, then load the scene again.");
+    }
+    if (photoUrl.current !== expectedSecondUrl) {
+      throw new Error("The loaded photos changed. Select the scene file again.");
+    }
+
+    setFirstCamera(cameras[0]);
+    if (cameras[1]) setSecondCamera(cameras[1]);
+  }
+
+  const sceneViews: OpenRoomView[] = [{ photo: firstPhoto, camera: firstCamera }];
+  if (secondPhoto) sceneViews.push({ photo: secondPhoto, camera: secondCamera });
+
   return {
+    sceneViews,
     view,
     selectView,
     settings,
     activePhoto,
     secondPhoto,
     photoError,
+    openingSecondPhoto,
     openSecondPhoto,
     adjustCamera,
     resetCamera,
+    restoreCameras,
   };
 }

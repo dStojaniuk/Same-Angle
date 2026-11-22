@@ -2,24 +2,27 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 
 import { placeBedOnPhoto, projectBed, projectFloorGuides } from "./bed";
 import { BedControls, BedViews } from "./BedPreview";
-import { createCameraProjection } from "./camera";
+import { createCameraProjection, type FloorPoint } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
 import { renderFloor } from "./floorRender";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
 import { initialGrid, projectFloor } from "./perspective";
 import { sampleRoom, type RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
+import { changeLayout, initialBed, startLayout } from "./roomLayout";
+import { PlanControls, RoomPlan } from "./RoomPlan";
+import { SceneFiles } from "./SceneFiles";
+import { SnapshotButton } from "./SnapshotButton";
 import { useBedViews } from "./useBedViews";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
-const initialBed = { center: { x: 0, z: 3.8 }, crosswise: false };
 
 type EditorMode =
   | { kind: "outline" }
   | { kind: "grid" }
   | { kind: "bed" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
-type FocusTarget = "grid" | "sample" | "render" | "slider" | "camera" | "preview-bed";
+type FocusTarget = "grid" | "sample" | "render" | "slider" | "camera" | "preview-bed" | "plan";
 
 type RoomEditorProps = {
   photo: RoomPhoto;
@@ -52,7 +55,12 @@ export function RoomEditor({
   const [zoomIndex, setZoomIndex] = useState(0);
   const [editorMode, setMode] = useState<EditorMode>({ kind: "outline" });
   const [photoTool, setPhotoTool] = useState<"points" | "pan" | "outline">("points");
-  const [bed, setBed] = useState(initialBed);
+  const [{ layout, past: pastLayout, future: futureLayout }, dispatchLayout] = useReducer(
+    changeLayout,
+    undefined,
+    startLayout,
+  );
+  const [planOpen, setPlanOpen] = useState(false);
   const [placementMessage, setPlacementMessage] = useState("");
   const [split, setSplit] = useState(50);
   const [movingGeometry, setMovingGeometry] = useState(false);
@@ -67,6 +75,7 @@ export function RoomEditor({
   const lastDraft = useRef(draft);
 
   const { outline } = draft;
+  const { bed } = layout;
   const mode =
     editorMode.kind === "grid" && outline.length < 3 ? ({ kind: "outline" } as const) : editorMode;
   const suggestedCorners = useMemo(
@@ -84,11 +93,13 @@ export function RoomEditor({
   const sampleComparisonUrl = photo.comparisonUrl;
   const comparison = mode.kind === "comparison" ? { url: mode.url, split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
+  const showFloorSave = mode.kind !== "bed";
+  const showPlan = mode.kind === "bed" && planOpen;
   const viewportPhoto = mode.kind === "bed" ? views.activePhoto : photo;
   const camera = mode.kind === "bed" ? createCameraProjection(viewportPhoto, views.settings) : null;
   const bedPreview = camera && {
-    faces: projectBed(camera, viewportPhoto, bed.center, bed.crosswise),
-    guides: projectFloorGuides(camera),
+    faces: projectBed(camera, viewportPhoto, bed.center, bed.crosswise, bed.size),
+    guides: projectFloorGuides(camera, layout.room),
     anchor: camera.project({ ...bed.center, y: 0 }),
     onPlace: placeBed,
   };
@@ -188,14 +199,38 @@ export function RoomEditor({
   function placeBed(point?: Point) {
     if (!camera) return;
 
-    const placement = placeBedOnPhoto(camera, viewportPhoto, bed.crosswise, point);
+    const placement = placeBedOnPhoto(camera, viewportPhoto, bed.crosswise, point, bed.size);
     if ("message" in placement) {
       setPlacementMessage(placement.message);
       return;
     }
 
-    setBed((current) => ({ ...current, center: placement.center }));
+    moveBed(placement.center);
     setPlacementMessage("");
+  }
+
+  function moveBed(center: FloorPoint) {
+    dispatchLayout({
+      type: "change",
+      update: (current) => ({ ...current, bed: { ...current.bed, center } }),
+    });
+  }
+
+  function rotateBed() {
+    dispatchLayout({
+      type: "change",
+      update: (current) => ({
+        ...current,
+        bed: { ...current.bed, crosswise: !current.bed.crosswise },
+      }),
+    });
+    setPlacementMessage("");
+  }
+
+  function backToOutline() {
+    views.selectView("first");
+    setPlanOpen(false);
+    changeMode({ kind: "outline" }, "preview-bed");
   }
 
   async function submitFloor() {
@@ -264,22 +299,22 @@ export function RoomEditor({
       </div>
 
       <div className="studio-layout">
-        <section className="canvas" aria-label="Photo workspace">
+        <section className="canvas" aria-label="Photo workspace" hidden={showPlan}>
           <div className="canvas-header">
             <div className="photo-details">
               <strong title={viewportPhoto.name}>{viewportPhoto.name}</strong>
               <span>
                 {viewportPhoto.width} × {viewportPhoto.height} px
               </span>
-              {viewportPhoto === photo && saveMessage && (
+              {showFloorSave && saveMessage && (
                 <output className="save-status">{saveMessage}</output>
               )}
-              {onRetrySave && (
+              {showFloorSave && onRetrySave && (
                 <button type="button" className="text-button retry-save" onClick={onRetrySave}>
                   Retry save
                 </button>
               )}
-              {onOpenSavedVersion && (
+              {showFloorSave && onOpenSavedVersion && (
                 <button
                   type="button"
                   className="text-button retry-save"
@@ -367,6 +402,16 @@ export function RoomEditor({
           )}
         </section>
 
+        {showPlan && (
+          <section className="canvas" aria-label="Layout workspace">
+            <RoomPlan
+              layout={layout}
+              cameras={views.sceneViews.map(({ camera }) => camera)}
+              onMove={moveBed}
+              focusSurface={focusAfterSwitch("plan")}
+            />
+          </section>
+        )}
         <aside className="editor-panel" aria-label="Room tools">
           {mode.kind === "comparison" ? (
             <>
@@ -402,41 +447,72 @@ export function RoomEditor({
           ) : bedPreview ? (
             <>
               <BedViews
-                view={views.view}
+                view={showPlan ? "plan" : views.view}
                 hasSecondPhoto={views.secondPhoto !== null}
                 photoError={views.photoError}
+                openingSecondPhoto={views.openingSecondPhoto}
                 onSelectView={(view) => {
-                  views.selectView(view);
-                  if (view !== views.view) resetViewport();
+                  if (view === "plan" && !showPlan) focusTarget.current = "plan";
+                  setPlanOpen(view === "plan");
+                  if (view !== "plan") {
+                    views.selectView(view);
+                    if (showPlan || view !== views.view) resetViewport();
+                  }
                 }}
                 onOpenSecondPhoto={(file) => void openSecondPhoto(file)}
               />
-              <BedControls
-                settings={views.settings}
-                hasSecondPhoto={views.secondPhoto !== null}
-                message={
-                  placementMessage ||
-                  (bedPreview.faces.length
-                    ? ""
-                    : "The bed is out of view. Adjust the camera or place it again on the photo.")
-                }
-                focusHeading={focusAfterSwitch("camera")}
-                onAdjust={(key, value) => {
-                  views.adjustCamera(key, value);
+              {showPlan ? (
+                <PlanControls
+                  layout={layout}
+                  canUndo={pastLayout.length > 0}
+                  canRedo={futureLayout.length > 0}
+                  onChange={(update) => dispatchLayout({ type: "change", update })}
+                  onUndo={() => dispatchLayout({ type: "undo" })}
+                  onRedo={() => dispatchLayout({ type: "redo" })}
+                  onRotate={rotateBed}
+                  onBack={backToOutline}
+                />
+              ) : (
+                <BedControls
+                  size={bed.size}
+                  settings={views.settings}
+                  hasSecondPhoto={views.secondPhoto !== null}
+                  message={
+                    placementMessage ||
+                    (bedPreview.faces.length
+                      ? ""
+                      : "The bed is out of view. Adjust the camera or place it again on the photo.")
+                  }
+                  focusHeading={focusAfterSwitch("camera")}
+                  onAdjust={(key, value) => {
+                    views.adjustCamera(key, value);
+                    setPlacementMessage("");
+                  }}
+                  onRotate={rotateBed}
+                  onReset={() => {
+                    views.resetCamera();
+                    if (!views.secondPhoto) {
+                      dispatchLayout({
+                        type: "change",
+                        update: (current) => ({ ...current, bed: initialBed }),
+                      });
+                    }
+                    setPlacementMessage("");
+                  }}
+                  onBack={backToOutline}
+                />
+              )}
+              <SceneFiles
+                layout={layout}
+                views={views.sceneViews}
+                photoChanging={views.openingSecondPhoto}
+                onLoad={(scene, secondPhotoUrl) => {
+                  views.restoreCameras(
+                    scene.views.map(({ camera }) => camera),
+                    secondPhotoUrl,
+                  );
+                  dispatchLayout({ type: "change", update: () => scene.layout });
                   setPlacementMessage("");
-                }}
-                onRotate={() => {
-                  setBed((current) => ({ ...current, crosswise: !current.crosswise }));
-                  setPlacementMessage("");
-                }}
-                onReset={() => {
-                  views.resetCamera();
-                  if (!views.secondPhoto) setBed(initialBed);
-                  setPlacementMessage("");
-                }}
-                onBack={() => {
-                  views.selectView("first");
-                  changeMode({ kind: "outline" }, "preview-bed");
                 }}
               />
             </>
@@ -582,6 +658,13 @@ export function RoomEditor({
               </button>
             </fieldset>
           )}
+          <SnapshotButton
+            snapshot={
+              bedPreview && !showPlan
+                ? { photo: viewportPhoto, faces: bedPreview.faces, view: views.view }
+                : null
+            }
+          />
         </aside>
       </div>
     </main>

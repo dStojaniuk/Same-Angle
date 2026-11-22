@@ -122,3 +122,20 @@ for (const leaveView of ["First view", "Back to outline"]) {
     await expect(fov).toHaveValue("72");
   });
 }
+
+test("keeps the saved floor draft status separate from the room scene", async ({ page }) => {
+  await page.goto("/");
+  await page
+    .getByLabel("Room photo", { exact: true })
+    .setInputFiles("tests/fixtures/rotated-room.jpg");
+  const savedFloor = page.getByText("Saved in this browser", { exact: true });
+  await expect(savedFloor).toBeVisible();
+
+  await page.getByRole("button", { name: "Preview a bed" }).click();
+  await page.getByRole("slider", { name: "Horizontal field of view" }).press("Home");
+  await expect(savedFloor).toHaveCount(0, { timeout: 2_000 });
+  await expect(page.getByText(/Download the scene to keep/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to outline" }).click();
+  await expect(savedFloor).toBeVisible();
+});

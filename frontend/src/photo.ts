@@ -6,6 +6,7 @@ export type RoomPhoto = PhotoSize & {
   name: string;
   // The editor and renderer share this image; the original upload is stored separately.
   url: string;
+  source?: Blob;
   comparisonUrl?: string;
   outline: Point[];
 };
@@ -97,7 +98,14 @@ export async function openRoomPhoto(file: Blob, name: string, isNew: boolean): P
         canvas.toBlob(resolve, "image/png"),
       );
       if (!workingPhoto) throw new Error(encodeError);
-      return { name, url: URL.createObjectURL(workingPhoto), width, height, outline: [] };
+      return {
+        name,
+        url: URL.createObjectURL(workingPhoto),
+        width,
+        height,
+        source: file,
+        outline: [],
+      };
     } finally {
       canvas.width = canvas.height = 0;
     }

@@ -1,27 +1,43 @@
-import type { createCameraProjection, FloorPoint } from "./camera";
+import type { createCameraProjection, FloorBounds, FloorPoint } from "./camera";
 import type { PhotoSize, Point } from "./outline";
 
 type Camera = ReturnType<typeof createCameraProjection>;
 
-export const bedSize = { width: 1.6, length: 2, height: 0.55 };
+export type BedSize = { width: number; length: number; height: number };
+export type Bed = { center: FloorPoint; size: BedSize; crosswise: boolean };
+export type ProjectedBedFace = { kind: "top" | "side"; points: Point[] };
+
+export const bedPaint = { top: "#fff0cfe8", side: "#c4a878ed", outline: "#382f22" };
+
+export const bedSize: BedSize = { width: 1.6, length: 2, height: 0.55 };
+
+export function bedBounds(center: FloorPoint, crosswise: boolean, size: BedSize): FloorBounds {
+  const width = crosswise ? size.length : size.width;
+  const length = crosswise ? size.width : size.length;
+  return { x: center.x - width / 2, z: center.z - length / 2, width, length };
+}
+
+function bedFootprint(center: FloorPoint, crosswise: boolean, size: BedSize): FloorPoint[] {
+  const { x, z, width, length } = bedBounds(center, crosswise, size);
+  return [
+    { x, z },
+    { x: x + width, z },
+    { x: x + width, z: z + length },
+    { x, z: z + length },
+  ];
+}
 
 export function projectBed(
   camera: Camera,
   photo: PhotoSize,
   center: FloorPoint,
   crosswise: boolean,
-): Point[][] {
-  const halfWidth = (crosswise ? bedSize.length : bedSize.width) / 2;
-  const halfLength = (crosswise ? bedSize.width : bedSize.length) / 2;
-  const footprint = [
-    { x: center.x - halfWidth, z: center.z - halfLength },
-    { x: center.x + halfWidth, z: center.z - halfLength },
-    { x: center.x + halfWidth, z: center.z + halfLength },
-    { x: center.x - halfWidth, z: center.z + halfLength },
-  ];
+  size = bedSize,
+): ProjectedBedFace[] {
+  const footprint = bedFootprint(center, crosswise, size);
   const base = footprint.map((point) => ({ ...point, y: 0 }));
-  const top = footprint.map((point) => ({ ...point, y: bedSize.height }));
-  const faces = [camera.projectFace(top)];
+  const top = footprint.map((point) => ({ ...point, y: size.height }));
+  const faces: ProjectedBedFace[] = [{ kind: "top", points: camera.projectFace(top) }];
 
   for (const [index, start] of footprint.entries()) {
     const next = (index + 1) % footprint.length;
@@ -30,12 +46,15 @@ export function projectBed(
     const outwardZ = start.x - end.x;
 
     if (outwardX * (camera.position.x - start.x) + outwardZ * (camera.position.z - start.z) > 0) {
-      faces.push(camera.projectFace([base[index], base[next], top[next], top[index]]));
+      faces.push({
+        kind: "side",
+        points: camera.projectFace([base[index], base[next], top[next], top[index]]),
+      });
     }
   }
 
-  const drawable = faces.filter((face) => face.length >= 3);
-  return drawable.some((face) => intersectsPhoto(face, photo)) ? drawable : [];
+  const drawable = faces.filter(({ points }) => points.length >= 3);
+  return drawable.some(({ points }) => intersectsPhoto(points, photo)) ? drawable : [];
 }
 
 function intersectsPhoto(face: Point[], photo: PhotoSize): boolean {
@@ -65,6 +84,7 @@ export function placeBedOnPhoto(
   photo: PhotoSize,
   crosswise: boolean,
   point?: Point,
+  size = bedSize,
 ): BedPlacement {
   if (point) return placementAt(point);
 
@@ -86,23 +106,34 @@ export function placeBedOnPhoto(
       maxPlacementDistanceMeters
     )
       return { message: "Choose a point closer to the camera." };
-    if (!projectBed(camera, photo, center, crosswise).length)
+    if (!projectBed(camera, photo, center, crosswise, size).length)
       return { message: "Choose a point where the bed fits in front of the camera." };
 
     return { center };
   }
 }
 
-export function projectFloorGuides(camera: Camera): [Point, Point][] {
-  const guides: [Point, Point][] = [];
+function gridCoordinates(start: number, end: number): number[] {
+  const values = [start];
+  for (let meter = Math.floor(start) + 1; meter < end - 1e-8; meter++) {
+    values.push(meter);
+  }
+  values.push(end);
+  return values;
+}
 
-  for (let meter = -4; meter <= 4; meter++) {
-    const line = camera.projectLine({ x: meter, y: 0, z: 0 }, { x: meter, y: 0, z: 10 });
+export function projectFloorGuides(camera: Camera, room: FloorBounds): [Point, Point][] {
+  const guides: [Point, Point][] = [];
+  const farX = room.x + room.width;
+  const farZ = room.z + room.length;
+
+  for (const x of gridCoordinates(room.x, farX)) {
+    const line = camera.projectLine({ x, y: 0, z: room.z }, { x, y: 0, z: farZ });
     if (line) guides.push(line);
   }
 
-  for (let meter = 1; meter <= 10; meter++) {
-    const line = camera.projectLine({ x: -4, y: 0, z: meter }, { x: 4, y: 0, z: meter });
+  for (const z of gridCoordinates(room.z, farZ)) {
+    const line = camera.projectLine({ x: room.x, y: 0, z }, { x: farX, y: 0, z });
     if (line) guides.push(line);
   }
 

@@ -506,14 +506,8 @@ h2 {
 }
 
 .bed-faces {
-  fill: #c4a878ed;
-  stroke: #382f22;
   stroke-width: 1.5;
   stroke-linejoin: round;
-}
-
-.bed-faces polygon:first-child {
-  fill: #fff0cfe8;
 }
 
 .editor-panel .bed-scale {
@@ -754,7 +748,7 @@ h2 {
 }
 
 .bed-view-switch {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
   border: 0;
   padding: 0;
   margin: 0;
@@ -764,4 +758,122 @@ h2 {
 .bed-view-switch [aria-pressed="true"] {
   border-color: var(--accent);
   background: #e9f2ea;
+}
+
+.canvas[hidden] {
+  display: none;
+}
+
+.room-plan {
+  position: relative;
+  min-height: 360px;
+  height: clamp(360px, 66vh, 740px);
+  display: grid;
+  place-items: stretch;
+  background: #e8eee8;
+}
+
+.room-plan svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.plan-room {
+  fill: #fcfdf9;
+  stroke: var(--ink);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.plan-grid-line {
+  fill: none;
+  stroke: #d3ddd6;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.plan-bed {
+  fill: #e9c999;
+  stroke: #60451b;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.plan-bed[data-outside="true"] {
+  fill: #efb3a5;
+  stroke: #a33a2c;
+}
+
+.plan-camera {
+  fill: var(--accent);
+}
+
+.plan-surface:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.plan-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 8px 0 0;
+  border: 0;
+}
+
+.plan-fields legend {
+  color: var(--ink);
+  font-weight: 620;
+}
+
+.plan-field {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 13px;
+}
+
+.plan-field input {
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.scene-files {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: 14px 0 0;
+  margin: 16px 0 0;
+}
+
+.editor-panel .scene-files-help {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+}
+
+.scene-files output {
+  grid-column: 1 / -1;
+  font-size: 13px;
+}
+
+.snapshot-action {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.snapshot-action output {
+  font-size: 13px;
 }

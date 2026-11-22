@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
 import { renderFloor } from "./floorRender";
-import { PhotoViewport } from "./PhotoViewport";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
 import { initialGrid, projectFloor } from "./perspective";
 import { sampleRoom, type RoomPhoto } from "./photo";
+import { PhotoViewport } from "./PhotoViewport";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
 
@@ -46,12 +47,15 @@ export function RoomEditor({
   const [editorMode, setMode] = useState<EditorMode>({ kind: "outline" });
   const [photoTool, setPhotoTool] = useState<"points" | "pan" | "outline">("points");
   const [split, setSplit] = useState(50);
-  const [rendering, setRendering] = useState(false);
   const [movingGeometry, setMovingGeometry] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
+
   const focusTarget = useRef<FocusTarget | null>(null);
   const request = useRef<AbortController | null>(null);
   const resultUrl = useRef<string | null>(null);
+  const lastDraft = useRef(draft);
+
   const { outline } = draft;
   const mode =
     editorMode.kind === "grid" && outline.length < 3 ? ({ kind: "outline" } as const) : editorMode;
@@ -60,12 +64,19 @@ export function RoomEditor({
     [outline],
   );
   const corners = draft.corners ?? suggestedCorners;
+
   const historyAvailable =
     mode.kind !== "comparison" && !rendering && !movingGeometry && !recoveringConflict;
   const validGrid = projectFloor(corners) !== null;
   const sampleComparisonUrl = photo.comparisonUrl;
   const comparison = mode.kind === "comparison" ? { url: mode.url, split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
+
+  const stepHistory = useCallback((type: "undo" | "redo") => {
+    dispatch({ type });
+    setPhotoTool((tool) => (tool === "outline" ? "points" : tool));
+    setRenderError("");
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -75,21 +86,16 @@ export function RoomEditor({
     };
   }, []);
 
-  const lastDraft = useRef(draft);
   useEffect(() => {
     if (lastDraft.current === draft) return;
+
     lastDraft.current = draft;
     onDraftChange(draft);
   }, [draft, onDraftChange]);
 
-  const stepHistory = useCallback((type: "undo" | "redo") => {
-    dispatch({ type });
-    setPhotoTool((tool) => (tool === "outline" ? "points" : tool));
-    setRenderError("");
-  }, []);
-
   useEffect(() => {
     if (!historyAvailable) return;
+
     function handleHistoryShortcut(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       if (
@@ -97,11 +103,14 @@ export function RoomEditor({
         event.target.closest("input, textarea, select, [contenteditable]")
       )
         return;
+
       const key = event.key.toLowerCase();
       if (key !== "z" && key !== "y") return;
+
       event.preventDefault();
       stepHistory(key === "y" || event.shiftKey ? "redo" : "undo");
     }
+
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
   }, [historyAvailable, stepHistory]);
@@ -147,6 +156,7 @@ export function RoomEditor({
 
   async function submitFloor() {
     if (!validGrid || movingGeometry || request.current) return;
+
     const controller = new AbortController();
     request.current = controller;
     setRenderError("");
@@ -156,16 +166,19 @@ export function RoomEditor({
     try {
       const result = await renderFloor(photo, outline, corners, controller.signal);
       if (request.current !== controller) return;
+
       incomingUrl = URL.createObjectURL(result);
       const image = new Image();
       image.src = incomingUrl;
       await image.decode().catch(() => {
         throw new Error("The renderer returned a PNG that could not be opened.");
       });
+
       if (request.current !== controller) return;
       if (image.naturalWidth !== photo.width || image.naturalHeight !== photo.height) {
         throw new Error("The rendered PNG does not match the photo dimensions.");
       }
+
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
       resultUrl.current = incomingUrl;
       setSplit(50);
@@ -178,6 +191,7 @@ export function RoomEditor({
       }
     } finally {
       if (incomingUrl) URL.revokeObjectURL(incomingUrl);
+
       if (request.current === controller) {
         request.current = null;
         setRendering(false);

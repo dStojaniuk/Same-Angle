@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+
 import type { FloorDraft } from "./floorDraft";
-import { RoomEditor } from "./RoomEditor";
 import { openRoomPhoto, sampleRoom, type RoomPhoto } from "./photo";
+import { RoomEditor } from "./RoomEditor";
 import {
   copyConflictedDraft,
   getProject,
@@ -35,23 +36,30 @@ export function App() {
   const [projectsUnavailable, setProjectsUnavailable] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
+
   const input = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
+  const activeObjectUrl = useRef<string | null>(null);
+  const focusSelectedHeading = useRef(false);
   const projectListRead = useRef({ id: 0, failed: false });
   const saveQueue = useRef(Promise.resolve());
   const recentEdits = useRef(new Map<string, PendingEdit>());
   const committed = useRef(new Map<string, SavedProject>());
   const savedRevisions = useRef(new WeakMap<SaveSession, number>());
-  const activeObjectUrl = useRef<string | null>(null);
-  const focusSelectedHeading = useRef(false);
+
+  const saveState = room.project && (saveStates[room.project.id] ?? "saved");
+  const saveMessage = saveState ? saveMessages[saveState] : "";
 
   const refreshProjects = useCallback(async () => {
     const read = projectListRead.current;
     const id = ++read.id;
+
     try {
       const stored = await getProjects();
       if (id !== read.id) return;
+
       const latest = new Map(stored.map((project) => [project.id, project]));
+
       // The read can finish after a draft has been saved or edited in this tab.
       for (const [projectId, project] of committed.current) {
         const fromStorage = latest.get(projectId);
@@ -59,26 +67,20 @@ export function App() {
           latest.set(projectId, project);
         }
       }
+
       for (const [projectId, { project }] of recentEdits.current) {
         latest.set(projectId, project);
       }
+
       setProjects([...latest.values()]);
       read.failed = false;
       setProjectsUnavailable(false);
     } catch {
       if (id !== read.id) return;
+
       read.failed = true;
       setProjectsUnavailable(true);
     }
-  }, []);
-
-  useEffect(() => {
-    const read = projectListRead.current;
-    return () => {
-      read.id += 1;
-      requestId.current += 1;
-      if (activeObjectUrl.current) URL.revokeObjectURL(activeObjectUrl.current);
-    };
   }, []);
 
   const queueSave = useCallback(
@@ -104,6 +106,7 @@ export function App() {
         (saved) => {
           if (projectListRead.current.failed) void refreshProjects();
           if (recentEdits.current.get(project.id) !== edit) return;
+
           recentEdits.current.delete(project.id);
           setProjects((current) => [saved, ...(current ?? []).filter(({ id }) => id !== saved.id)]);
           setSaveStates((current) => ({ ...current, [project.id]: "saved" }));
@@ -129,8 +132,19 @@ export function App() {
     [room.project, room.saveSession, queueSave],
   );
 
+  useEffect(() => {
+    const read = projectListRead.current;
+
+    return () => {
+      read.id += 1;
+      requestId.current += 1;
+      if (activeObjectUrl.current) URL.revokeObjectURL(activeObjectUrl.current);
+    };
+  }, []);
+
   function selectRoom(next: ActiveRoom) {
     if (activeObjectUrl.current) URL.revokeObjectURL(activeObjectUrl.current);
+
     activeObjectUrl.current = next.photo.url.startsWith("blob:") ? next.photo.url : null;
     setRoom(next);
     setShowProjects(false);
@@ -190,6 +204,7 @@ export function App() {
         const unsaved = recentEdits.current.get(id);
         const project = unsaved?.project ?? newest ?? saved;
         const saveSession = unsaved?.session ?? { baseRevision: project.revision ?? 0 };
+
         focusSelectedHeading.current = true;
         selectRoom({ photo, project, saveSession });
       } else {
@@ -203,8 +218,9 @@ export function App() {
           updatedAt: Date.now(),
           revision: 0,
         };
-        focusSelectedHeading.current = false;
         const saveSession = { baseRevision: 0 };
+
+        focusSelectedHeading.current = false;
         selectRoom({ photo, project, saveSession });
         queueSave(project, saveSession);
       }
@@ -261,12 +277,11 @@ export function App() {
     }
   }
 
-  const saveState = room.project && (saveStates[room.project.id] ?? "saved");
-  const saveMessage = saveState ? saveMessages[saveState] : "";
-
   function retrySave() {
     if (!room.project) return;
+
     const edit = recentEdits.current.get(room.project.id);
+
     if (edit) queueSave({ ...edit.project, updatedAt: Date.now() }, edit.session);
   }
 

@@ -53,8 +53,10 @@ export async function renderFloor(
   );
 
   const response = await fetch("/api/floor-render", { method: "POST", body: form, signal });
+
   if (!response.ok) {
     const error: unknown = await response.json().catch(() => null);
+
     if (
       error &&
       typeof error === "object" &&
@@ -63,6 +65,7 @@ export async function renderFloor(
     ) {
       throw new Error(error.detail);
     }
+
     throw new Error(
       "The local renderer could not complete the request. Check that Same Angle is running.",
     );
@@ -70,6 +73,7 @@ export async function renderFloor(
   if (response.headers.get("content-type") !== "image/png") {
     throw new Error("The local renderer did not return a PNG.");
   }
+
   const result = await response.blob();
   if ((await readPhotoFormat(result)) !== "png") {
     throw new Error("The local renderer did not return a PNG.");

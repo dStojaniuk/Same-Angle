@@ -106,6 +106,7 @@ def render_photo(
                     source.info.get("icc_profile")
                     and source.mode not in {"RGB", "RGBA"}
                 )
+
                 if (
                     header[24] > 8
                     or source.get_format_mimetype() == "image/apng"
@@ -118,14 +119,17 @@ def render_photo(
                     )
             elif photo.size is not None and photo.size > MAX_PHOTO_BYTES:
                 raise HTTPException(413, "Choose a photo of 25 MiB or less.")
+
             if source.width * source.height > MAX_PHOTO_PIXELS:
                 raise HTTPException(413, "Choose a photo of 24 megapixels or less.")
+
             original = ImageOps.exif_transpose(source)
             if original.size != (approved.width, approved.height):
                 raise HTTPException(
                     422,
                     "The approved outline and grid must match the oriented photo size.",
                 )
+
             result = render_floor(
                 original, approved.outline, approved.corners, oak_texture()
             )
@@ -143,6 +147,7 @@ def render_photo(
 
     with BytesIO() as output:
         result.save(output, format="PNG", icc_profile=profile)
+
         return Response(
             output.getvalue(),
             media_type="image/png",

@@ -20,12 +20,15 @@ export function clientToPhoto(point: Point, rect: PhotoRect, photo: PhotoSize): 
 
 export function movePoint(outline: Point[], index: number, position: Point): Point[] {
   const previous = outline[index];
+
   if (previous.x === position.x && previous.y === position.y) return outline;
+
   return outline.map((point, pointIndex) => (pointIndex === index ? position : point));
 }
 
 export function translateOutline(points: Point[], offset: Point, photo: PhotoSize): Point[] {
   if (!points.length) return points;
+
   const xs = points.map(({ x }) => x);
   const ys = points.map(({ y }) => y);
   const x = Math.max(
@@ -36,6 +39,8 @@ export function translateOutline(points: Point[], offset: Point, photo: PhotoSiz
     -Math.min(...ys),
     Math.min(photo.height - Math.max(...ys), Math.round(offset.y)),
   );
+
   if (!x && !y) return points;
+
   return points.map((point) => ({ x: point.x + x, y: point.y + y }));
 }

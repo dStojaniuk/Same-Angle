@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+
 import { floorGridLines, projectFloor } from "../../src/perspective";
 
 const corners = [

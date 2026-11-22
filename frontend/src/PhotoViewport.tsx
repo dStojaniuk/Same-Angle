@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+
 import {
   MAX_OUTLINE_POINTS,
   clientToPhoto,
@@ -45,6 +46,8 @@ export function PhotoViewport({
   comparison,
   grid,
 }: PhotoViewportProps) {
+  const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
+
   const frame = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const addPoint = useRef<HTMLButtonElement>(null);
@@ -52,35 +55,42 @@ export function PhotoViewport({
     null,
   );
   const drag = useRef<Drag | null>(null);
-  const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
+
   const editing = comparison === null;
   const panning = tool === "pan";
   const movingOutline = tool === "outline";
+
   const editPoints = grid?.corners ?? outline;
   const locked = grid?.locked ?? false;
   const visiblePoints = preview?.base === editPoints ? preview.points : editPoints;
   const mask = grid ? outline : visiblePoints;
   const points = mask.map(({ x, y }) => `${x},${y}`).join(" ");
+  const sizing = { "--image-ratio": photo.width / photo.height, "--zoom": zoom } as CSSProperties;
 
   useEffect(() => {
     const current = drag.current;
+
     if (current && (!editing || locked || current.tool !== tool || current.base !== editPoints)) {
       drag.current = null;
       onGeometryMove(false);
       setPreview(null);
     }
+
     if (!panning) pan.current = null;
   }, [editing, locked, panning, tool, editPoints, onGeometryMove]);
 
   function photoPosition(event: { clientX: number; clientY: number }) {
     const rect = frame.current!.getBoundingClientRect();
+
     return clientToPhoto({ x: event.clientX, y: event.clientY }, rect, photo);
   }
 
   function startDrag(event: PointerEvent<HTMLButtonElement>, index?: number) {
     if (!event.isPrimary || event.button !== 0 || drag.current || tool === "pan") return;
+
     const origin = photoPosition(event);
     const point = index === undefined ? undefined : editPoints[index];
+
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = {
       pointerId: event.pointerId,
@@ -89,31 +99,37 @@ export function PhotoViewport({
       move: (target) => {
         const offset = { x: target.x - origin.x, y: target.y - origin.y };
         if (index === undefined || !point) return translateOutline(editPoints, offset, photo);
+
         const next = limitToPhoto({ x: point.x + offset.x, y: point.y + offset.y }, photo);
         return movePoint(editPoints, index, next);
       },
     };
+
     onGeometryMove(true);
   }
 
   function previewDrag(event: PointerEvent<HTMLButtonElement>) {
     const current = drag.current;
     if (current?.pointerId !== event.pointerId) return;
+
     setPreview({ points: current.move(photoPosition(event)), base: current.base });
   }
 
   function finishDrag(event: PointerEvent<HTMLButtonElement>, cancelled = false) {
     const current = drag.current;
     if (current?.pointerId !== event.pointerId) return;
+
     drag.current = null;
     onGeometryMove(false);
     setPreview(null);
+
     if (!cancelled && current.base === editPoints) onEdit(current.move(photoPosition(event)));
   }
 
   function startPan(event: PointerEvent<HTMLButtonElement>) {
     const scroll = viewport.current;
     if (!scroll || !event.isPrimary || event.button !== 0 || pan.current) return;
+
     event.currentTarget.setPointerCapture(event.pointerId);
     pan.current = {
       pointerId: event.pointerId,
@@ -127,6 +143,7 @@ export function PhotoViewport({
   function movePan(event: PointerEvent<HTMLButtonElement>) {
     const origin = pan.current;
     if (origin?.pointerId !== event.pointerId || !viewport.current) return;
+
     viewport.current.scrollLeft = origin.left + origin.x - event.clientX;
     viewport.current.scrollTop = origin.top + origin.y - event.clientY;
   }
@@ -134,8 +151,6 @@ export function PhotoViewport({
   function endPan(event: PointerEvent<HTMLButtonElement>) {
     if (pan.current?.pointerId === event.pointerId) pan.current = null;
   }
-
-  const sizing = { "--image-ratio": photo.width / photo.height, "--zoom": zoom } as CSSProperties;
 
   return (
     <div className="photo-scroll" style={sizing} ref={viewport}>
@@ -224,8 +239,10 @@ export function PhotoViewport({
                         }
                         return;
                       }
+
                       const step = arrowSteps.get(event.key);
                       if (!step || drag.current) return;
+
                       event.preventDefault();
                       const amount = event.shiftKey ? 10 : 1;
                       const point = limitToPhoto(
@@ -234,6 +251,7 @@ export function PhotoViewport({
                       );
                       const next = movePoint(editPoints, index, point);
                       if (next === editPoints) return;
+
                       onEdit(next);
                       const handle = event.currentTarget;
                       requestAnimationFrame(() => {

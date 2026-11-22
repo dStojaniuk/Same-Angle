@@ -188,8 +188,10 @@ def render_floor(
     ):
         raise ValueError("Keep the outline and grid corners inside the photo.")
     _validate_outline(outline)
+
     inverse = _photo_to_floor(corners)
     projected = _project_texture(original.size, outline, inverse, texture)
+
     source = original.convert("RGBA")
     mask = _rasterize_outline(source.size, outline)
     shade = source.convert("L").point(
@@ -197,6 +199,7 @@ def render_floor(
     )
     shaded = ImageChops.multiply(projected, shade.convert("RGB"))
     shaded.putalpha(source.getchannel("A"))
+
     return Image.composite(shaded, source, mask)
 
 

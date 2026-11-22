@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+
 import { clientToPhoto, limitToPhoto, movePoint, translateOutline } from "../../src/outline";
 
 test("the same feature maps to the same image point at two viewport sizes", () => {

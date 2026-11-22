@@ -6,6 +6,8 @@ export type CameraSettings = {
   tilt: number;
   roll: number;
   heightMeters: number;
+  xMeters: number;
+  zMeters: number;
 };
 
 export const initialCameraSettings: CameraSettings = {
@@ -14,6 +16,8 @@ export const initialCameraSettings: CameraSettings = {
   tilt: 9,
   roll: 0,
   heightMeters: 1.45,
+  xMeters: 0,
+  zMeters: 0,
 };
 
 export type FloorPoint = { x: number; z: number };
@@ -24,6 +28,7 @@ const nearMeters = 0.1;
 
 // The floor is y = 0. An unrotated camera faces +z and has its right axis along +x.
 export function createCameraProjection(photo: PhotoSize, settings: CameraSettings) {
+  const position = { x: settings.xMeters, z: settings.zMeters };
   const yaw = settings.yaw * radians;
   const tilt = settings.tilt * radians;
   const roll = settings.roll * radians;
@@ -46,14 +51,16 @@ export function createCameraProjection(photo: PhotoSize, settings: CameraSetting
   };
 
   function toCamera(point: WorldPoint): WorldPoint {
+    const offsetX = point.x - position.x;
+    const offsetZ = point.z - position.z;
     const offsetY = point.y - settings.heightMeters;
-    const horizontal = point.x * right.x + point.z * right.z;
-    const vertical = point.x * up.x + offsetY * up.y + point.z * up.z;
+    const horizontal = offsetX * right.x + offsetZ * right.z;
+    const vertical = offsetX * up.x + offsetY * up.y + offsetZ * up.z;
 
     return {
       x: horizontal * cosRoll + vertical * sinRoll,
       y: vertical * cosRoll - horizontal * sinRoll,
-      z: point.x * forward.x + offsetY * forward.y + point.z * forward.z,
+      z: offsetX * forward.x + offsetY * forward.y + offsetZ * forward.z,
     };
   }
 
@@ -69,24 +76,37 @@ export function createCameraProjection(photo: PhotoSize, settings: CameraSetting
     return view.z >= nearMeters ? toPhoto(view) : null;
   }
 
+  function atNear(behind: WorldPoint, ahead: WorldPoint): WorldPoint {
+    const t = (nearMeters - behind.z) / (ahead.z - behind.z);
+    return {
+      x: behind.x + (ahead.x - behind.x) * t,
+      y: behind.y + (ahead.y - behind.y) * t,
+      z: nearMeters,
+    };
+  }
+
   function projectLine(start: WorldPoint, end: WorldPoint): [Point, Point] | null {
     let from = toCamera(start);
     let to = toCamera(end);
     if (from.z < nearMeters && to.z < nearMeters) return null;
 
-    // Clip the guide to the camera's near plane before dividing by depth.
-    function atNear(behind: WorldPoint, ahead: WorldPoint): WorldPoint {
-      const t = (nearMeters - behind.z) / (ahead.z - behind.z);
-      return {
-        x: behind.x + (ahead.x - behind.x) * t,
-        y: behind.y + (ahead.y - behind.y) * t,
-        z: nearMeters,
-      };
-    }
-
     if (from.z < nearMeters) from = atNear(from, to);
     if (to.z < nearMeters) to = atNear(to, from);
     return [toPhoto(from), toPhoto(to)];
+  }
+
+  function projectFace(face: WorldPoint[]): Point[] {
+    const vertices = face.map(toCamera);
+    const clipped: WorldPoint[] = [];
+
+    for (const [index, vertex] of vertices.entries()) {
+      const previous = vertices[(index + vertices.length - 1) % vertices.length];
+      if (previous.z < nearMeters && vertex.z > nearMeters) clipped.push(atNear(previous, vertex));
+      if (previous.z > nearMeters && vertex.z < nearMeters) clipped.push(atNear(vertex, previous));
+      if (vertex.z >= nearMeters) clipped.push(vertex);
+    }
+
+    return clipped.length < 3 ? [] : clipped.map(toPhoto);
   }
 
   function pointOnFloor(point: Point): FloorPoint | null {
@@ -101,10 +121,10 @@ export function createCameraProjection(photo: PhotoSize, settings: CameraSetting
     if (depth < nearMeters) return null;
 
     return {
-      x: depth * (forward.x + alongRight * right.x + alongUp * up.x),
-      z: depth * (forward.z + alongRight * right.z + alongUp * up.z),
+      x: position.x + depth * (forward.x + alongRight * right.x + alongUp * up.x),
+      z: position.z + depth * (forward.z + alongRight * right.z + alongUp * up.z),
     };
   }
 
-  return { project, projectLine, pointOnFloor };
+  return { position, project, projectLine, projectFace, pointOnFloor };
 }

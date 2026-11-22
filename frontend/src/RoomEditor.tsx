@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { placeBedOnPhoto, projectBed, projectFloorGuides } from "./bed";
-import { BedControls } from "./BedPreview";
-import { createCameraProjection, initialCameraSettings, type CameraSettings } from "./camera";
+import { BedControls, BedViews } from "./BedPreview";
+import { createCameraProjection } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
 import { renderFloor } from "./floorRender";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
 import { initialGrid, projectFloor } from "./perspective";
 import { sampleRoom, type RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
+import { useBedViews } from "./useBedViews";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
-const initialBed = { settings: initialCameraSettings, center: { x: 0, z: 3.8 }, crosswise: false };
+const initialBed = { center: { x: 0, z: 3.8 }, crosswise: false };
 
 type EditorMode =
   | { kind: "outline" }
@@ -58,6 +59,8 @@ export function RoomEditor({
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
 
+  const views = useBedViews(photo);
+
   const focusTarget = useRef<FocusTarget | null>(null);
   const request = useRef<AbortController | null>(null);
   const resultUrl = useRef<string | null>(null);
@@ -81,9 +84,10 @@ export function RoomEditor({
   const sampleComparisonUrl = photo.comparisonUrl;
   const comparison = mode.kind === "comparison" ? { url: mode.url, split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
-  const camera = mode.kind === "bed" ? createCameraProjection(photo, bed.settings) : null;
+  const viewportPhoto = mode.kind === "bed" ? views.activePhoto : photo;
+  const camera = mode.kind === "bed" ? createCameraProjection(viewportPhoto, views.settings) : null;
   const bedPreview = camera && {
-    faces: projectBed(camera, photo, bed.center, bed.crosswise),
+    faces: projectBed(camera, viewportPhoto, bed.center, bed.crosswise),
     guides: projectFloorGuides(camera),
     anchor: camera.project({ ...bed.center, y: 0 }),
     onPlace: placeBed,
@@ -171,15 +175,20 @@ export function RoomEditor({
     setRenderError("");
   }
 
-  function adjustCamera(key: keyof CameraSettings, value: number) {
-    setBed((current) => ({ ...current, settings: { ...current.settings, [key]: value } }));
+  function resetViewport() {
     setPlacementMessage("");
+    setPhotoTool("points");
+    setZoomIndex(0);
+  }
+
+  async function openSecondPhoto(file: File) {
+    if (await views.openSecondPhoto(file)) resetViewport();
   }
 
   function placeBed(point?: Point) {
     if (!camera) return;
 
-    const placement = placeBedOnPhoto(camera, photo, bed.crosswise, point);
+    const placement = placeBedOnPhoto(camera, viewportPhoto, bed.crosswise, point);
     if ("message" in placement) {
       setPlacementMessage(placement.message);
       return;
@@ -258,11 +267,13 @@ export function RoomEditor({
         <section className="canvas" aria-label="Photo workspace">
           <div className="canvas-header">
             <div className="photo-details">
-              <strong title={photo.name}>{photo.name}</strong>
+              <strong title={viewportPhoto.name}>{viewportPhoto.name}</strong>
               <span>
-                {photo.width} × {photo.height} px
+                {viewportPhoto.width} × {viewportPhoto.height} px
               </span>
-              {saveMessage && <output className="save-status">{saveMessage}</output>}
+              {viewportPhoto === photo && saveMessage && (
+                <output className="save-status">{saveMessage}</output>
+              )}
               {onRetrySave && (
                 <button type="button" className="text-button retry-save" onClick={onRetrySave}>
                   Retry save
@@ -327,7 +338,8 @@ export function RoomEditor({
             </div>
           </div>
           <PhotoViewport
-            photo={photo}
+            key={viewportPhoto.url}
+            photo={viewportPhoto}
             outline={outline}
             onEdit={grid ? editGrid : editOutline}
             grid={grid}
@@ -388,26 +400,46 @@ export function RoomEditor({
               )}
             </>
           ) : bedPreview ? (
-            <BedControls
-              settings={bed.settings}
-              message={
-                placementMessage ||
-                (bedPreview.faces.length
-                  ? ""
-                  : "The bed is out of view. Place it on the photo or reset the preview.")
-              }
-              focusHeading={focusAfterSwitch("camera")}
-              onAdjust={adjustCamera}
-              onRotate={() => {
-                setBed((current) => ({ ...current, crosswise: !current.crosswise }));
-                setPlacementMessage("");
-              }}
-              onReset={() => {
-                setBed(initialBed);
-                setPlacementMessage("");
-              }}
-              onBack={() => changeMode({ kind: "outline" }, "preview-bed")}
-            />
+            <>
+              <BedViews
+                view={views.view}
+                hasSecondPhoto={views.secondPhoto !== null}
+                photoError={views.photoError}
+                onSelectView={(view) => {
+                  views.selectView(view);
+                  if (view !== views.view) resetViewport();
+                }}
+                onOpenSecondPhoto={(file) => void openSecondPhoto(file)}
+              />
+              <BedControls
+                settings={views.settings}
+                hasSecondPhoto={views.secondPhoto !== null}
+                message={
+                  placementMessage ||
+                  (bedPreview.faces.length
+                    ? ""
+                    : "The bed is out of view. Adjust the camera or place it again on the photo.")
+                }
+                focusHeading={focusAfterSwitch("camera")}
+                onAdjust={(key, value) => {
+                  views.adjustCamera(key, value);
+                  setPlacementMessage("");
+                }}
+                onRotate={() => {
+                  setBed((current) => ({ ...current, crosswise: !current.crosswise }));
+                  setPlacementMessage("");
+                }}
+                onReset={() => {
+                  views.resetCamera();
+                  if (!views.secondPhoto) setBed(initialBed);
+                  setPlacementMessage("");
+                }}
+                onBack={() => {
+                  views.selectView("first");
+                  changeMode({ kind: "outline" }, "preview-bed");
+                }}
+              />
+            </>
           ) : mode.kind === "grid" ? (
             <>
               <h2>Align the floor grid</h2>

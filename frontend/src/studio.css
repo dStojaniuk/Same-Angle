@@ -742,3 +742,26 @@ h2 {
   padding: 2px 0;
   font-size: 13px;
 }
+
+.bed-view-controls,
+.bed-view-switch {
+  display: grid;
+  gap: 8px;
+}
+
+.bed-view-controls {
+  margin-bottom: 20px;
+}
+
+.bed-view-switch {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.bed-view-switch [aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #e9f2ea;
+}

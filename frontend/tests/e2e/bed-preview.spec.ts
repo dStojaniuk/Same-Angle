@@ -58,7 +58,9 @@ test("opens a fresh bed preview on an uploaded portrait photo", async ({ page })
   const defaultFov = await fov.inputValue();
   await fov.press("End");
 
-  await page.getByLabel("Room photo").setInputFiles("tests/fixtures/rotated-room.jpg");
+  await page
+    .getByLabel("Room photo", { exact: true })
+    .setInputFiles("tests/fixtures/rotated-room.jpg");
   await expect(page.getByRole("img", { name: "rotated-room.jpg" })).toBeVisible();
   await openPreview.click();
   await expect(fov).toHaveValue(defaultFov);

@@ -19,22 +19,23 @@ export function projectBed(
     { x: center.x + halfWidth, z: center.z + halfLength },
     { x: center.x - halfWidth, z: center.z + halfLength },
   ];
-  const base = footprint.map((point) => camera.project({ ...point, y: 0 }));
-  const top = footprint.map((point) => camera.project({ ...point, y: bedSize.height }));
-  if (!base.every((point) => point !== null) || !top.every((point) => point !== null)) return [];
+  const base = footprint.map((point) => ({ ...point, y: 0 }));
+  const top = footprint.map((point) => ({ ...point, y: bedSize.height }));
+  const faces = [camera.projectFace(top)];
 
-  const faces = [top];
   for (const [index, start] of footprint.entries()) {
     const next = (index + 1) % footprint.length;
     const end = footprint[next];
+    const outwardX = end.z - start.z;
+    const outwardZ = start.x - end.x;
 
-    // The camera is at x = z = 0. Draw the side when its outward normal faces the camera.
-    if (start.z * end.x > start.x * end.z) {
-      faces.push([base[index], base[next], top[next], top[index]]);
+    if (outwardX * (camera.position.x - start.x) + outwardZ * (camera.position.z - start.z) > 0) {
+      faces.push(camera.projectFace([base[index], base[next], top[next], top[index]]));
     }
   }
 
-  return faces.some((face) => intersectsPhoto(face, photo)) ? faces : [];
+  const drawable = faces.filter((face) => face.length >= 3);
+  return drawable.some((face) => intersectsPhoto(face, photo)) ? drawable : [];
 }
 
 function intersectsPhoto(face: Point[], photo: PhotoSize): boolean {
@@ -80,7 +81,10 @@ export function placeBedOnPhoto(
   function placementAt(pixel: Point): BedPlacement {
     const center = camera.pointOnFloor(pixel);
     if (!center) return { message: "Choose a point on the floor below the horizon." };
-    if (Math.hypot(center.x, center.z) > maxPlacementDistanceMeters)
+    if (
+      Math.hypot(center.x - camera.position.x, center.z - camera.position.z) >
+      maxPlacementDistanceMeters
+    )
       return { message: "Choose a point closer to the camera." };
     if (!projectBed(camera, photo, center, crosswise).length)
       return { message: "Choose a point where the bed fits in front of the camera." };

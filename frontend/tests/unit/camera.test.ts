@@ -4,7 +4,15 @@ import { projectBed } from "../../src/bed";
 import { createCameraProjection, initialCameraSettings } from "../../src/camera";
 
 const photo = { width: 1000, height: 600 };
-const level = { fieldOfView: 90, yaw: 0, tilt: 0, roll: 0, heightMeters: 1.5 };
+const level = {
+  fieldOfView: 90,
+  yaw: 0,
+  tilt: 0,
+  roll: 0,
+  heightMeters: 1.5,
+  xMeters: 0,
+  zMeters: 0,
+};
 
 test("projects a known floor point and a point half a meter above it", () => {
   const camera = createCameraProjection(photo, level);
@@ -56,7 +64,7 @@ test("draws the near side and top of the bed with its width on the floor", () =>
 
   const [rotated] = projectBed(camera, photo, center, true);
   expect(rotated[1].x - rotated[0].x).toBeGreaterThan(top[1].x - top[0].x);
-  expect(projectBed(camera, photo, { x: 0, z: 0.6 }, false)).toEqual([]);
+  expect(projectBed(camera, photo, { x: 0, z: -1.2 }, false)).toEqual([]);
 });
 
 test("projects the horizon below center for a camera pitched upward", () => {
@@ -84,4 +92,32 @@ test("treats a bed beyond a frame corner as out of view", () => {
   });
 
   expect(projectBed(camera, photo, center, false)).toEqual([]);
+});
+
+test("two opposing cameras project and recover one room position", () => {
+  const first = createCameraProjection(photo, level);
+  const second = createCameraProjection(photo, { ...level, xMeters: 2, zMeters: 8, yaw: 180 });
+  const point = { x: 1, y: 0, z: 5 };
+  expect(first.project(point)).toEqual({ x: 600, y: 450 });
+
+  const otherPixel = second.project(point)!;
+  expect(otherPixel.x).toBeCloseTo(666.667, 2);
+  expect(otherPixel.y).toBeCloseTo(550);
+  const floor = second.pointOnFloor(otherPixel)!;
+  expect(floor.x).toBeCloseTo(1);
+  expect(floor.z).toBeCloseTo(5);
+});
+
+test("clips a face with corners behind the second camera", () => {
+  const camera = createCameraProjection(photo, { ...level, zMeters: 8, yaw: 180 });
+  const face = camera.projectFace([
+    { x: -0.5, y: 0, z: 7 },
+    { x: 0.5, y: 0, z: 7 },
+    { x: 0.5, y: 0, z: 9 },
+    { x: -0.5, y: 0, z: 9 },
+  ]);
+  expect(face).toHaveLength(4);
+  expect(face.map(({ y }) => Math.round(y)).sort((a, b) => a - b)).toEqual([
+    1050, 1050, 7800, 7800,
+  ]);
 });

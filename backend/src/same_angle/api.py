@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngImageFile
 from pydantic import BaseModel, Field, ValidationError
 
-from same_angle.floor import oak_texture, render_floor
+from same_angle.floor import Matrix, oak_texture, render_calibrated_floor, render_floor
 
 app = FastAPI(title="Same Angle local renderer")
 MAX_PHOTO_BYTES = 25 * 1024 * 1024
@@ -29,7 +29,8 @@ class FloorPlan(BaseModel):
     width: Dimension
     height: Dimension
     outline: Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
-    corners: Annotated[list[Point], Field(min_length=4, max_length=4)]
+    corners: Annotated[list[Point], Field(min_length=4, max_length=4)] | None = None
+    projection: Matrix | None = None
 
 
 def _has_cicp(file: BinaryIO) -> bool:
@@ -49,6 +50,22 @@ def _has_cicp(file: BinaryIO) -> bool:
         return False
     finally:
         file.seek(position)
+
+
+def _requires_prepared_png(image: PngImageFile, file: BinaryIO, bit_depth: int) -> bool:
+    profile = image.info.get("icc_profile")
+    unsupported_color = (
+        image.mode not in {"RGB", "RGBA"}
+        if profile
+        else "srgb" not in image.info
+        and ("gamma" in image.info or "chromaticity" in image.info)
+    )
+    return (
+        bit_depth > 8
+        or image.get_format_mimetype() == "image/apng"
+        or unsupported_color
+        or _has_cicp(file)
+    )
 
 
 @app.middleware("http")
@@ -90,29 +107,20 @@ def render_photo(
     except ValidationError as error:
         raise HTTPException(
             422,
-            f"Send the photo size, 3 to {MAX_OUTLINE_POINTS} outline points, and four grid corners.",
+            f"Send the photo size, 3 to {MAX_OUTLINE_POINTS} outline points, and a floor projection.",
         ) from error
+
+    if (approved.corners is None) == (approved.projection is None):
+        raise HTTPException(
+            422, "Send four grid corners or a calibrated floor projection."
+        )
 
     try:
         # PNG stores the bit depth in IHDR, even when Pillow decodes to an 8-bit mode.
         header = photo.file.read(25)
         with Image.open(photo.file, formats=["JPEG", "PNG", "WEBP"]) as source:
             if isinstance(source, PngImageFile):
-                unsupported_color = (
-                    not source.info.get("icc_profile")
-                    and "srgb" not in source.info
-                    and ("gamma" in source.info or "chromaticity" in source.info)
-                ) or (
-                    source.info.get("icc_profile")
-                    and source.mode not in {"RGB", "RGBA"}
-                )
-
-                if (
-                    header[24] > 8
-                    or source.get_format_mimetype() == "image/apng"
-                    or unsupported_color
-                    or _has_cicp(photo.file)
-                ):
+                if _requires_prepared_png(source, photo.file, header[24]):
                     raise HTTPException(
                         422,
                         "Open this photo in the editor to prepare it for rendering.",
@@ -130,9 +138,15 @@ def render_photo(
                     "The approved outline and grid must match the oriented photo size.",
                 )
 
-            result = render_floor(
-                original, approved.outline, approved.corners, oak_texture()
-            )
+            if approved.projection is not None:
+                result = render_calibrated_floor(
+                    original, approved.outline, approved.projection, oak_texture()
+                )
+            else:
+                assert approved.corners is not None
+                result = render_floor(
+                    original, approved.outline, approved.corners, oak_texture()
+                )
             profile = (
                 original.info.get("icc_profile")
                 if original.mode in {"RGB", "RGBA"}

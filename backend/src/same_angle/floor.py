@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from functools import cache
-from math import ceil, floor, sin
+from math import ceil, floor, isfinite, sin
 from random import Random
 
 from PIL import Image, ImageChops, ImageDraw
@@ -35,7 +35,7 @@ def _edges_cross(a: PixelPoint, b: PixelPoint, c: PixelPoint, d: PixelPoint) -> 
     )
 
 
-def _validate_outline(outline: Sequence[PixelPoint]) -> None:
+def validate_polygon(outline: Sequence[PixelPoint]) -> None:
     edges = (
         list(zip(outline, (*outline[1:], outline[0]), strict=True)) if outline else []
     )
@@ -122,6 +122,8 @@ def _project_texture(
         f - d * offset_x - e * offset_y,
         k - g * offset_x - h * offset_y,
     )
+    if k == 0:
+        raise ValueError("Move the projection away from the floor horizon.")
     scale = pixels_per_tile / k
     coefficients = (
         (a - left * g) * scale,
@@ -147,12 +149,12 @@ def _project_texture(
     )
 
 
-def _rasterize_outline(
+def rasterize_polygon(
     size: tuple[int, int], outline: Sequence[PixelPoint]
 ) -> Image.Image:
     width, height = size
     if height > width:
-        return _rasterize_outline(
+        return rasterize_polygon(
             (height, width), [(y, x) for x, y in outline]
         ).transpose(Image.Transpose.TRANSPOSE)
 
@@ -187,13 +189,41 @@ def render_floor(
         for x, y in (*outline, *corners)
     ):
         raise ValueError("Keep the outline and grid corners inside the photo.")
-    _validate_outline(outline)
+    return _render_mapped_floor(original, outline, _photo_to_floor(corners), texture)
 
-    inverse = _photo_to_floor(corners)
+
+def render_calibrated_floor(
+    original: Image.Image,
+    outline: Sequence[PixelPoint],
+    projection: Matrix,
+    texture: Image.Image,
+) -> Image.Image:
+    if any(
+        not (0 <= x <= original.width and 0 <= y <= original.height) for x, y in outline
+    ):
+        raise ValueError("Keep the outline inside the photo.")
+    if any(not isfinite(value) or abs(value) > 1024 for value in projection):
+        raise ValueError("Use a finite camera projection.")
+    a, b, c, d, e, f, g, h, k = projection
+    determinant = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g)
+    if abs(determinant) < 1e-18:
+        raise ValueError("The camera projection cannot map the floor.")
+    if any(g * x + h * y + k <= 1e-6 for x, y in outline):
+        raise ValueError("Keep the outline below the calibrated horizon.")
+    return _render_mapped_floor(original, outline, projection, texture)
+
+
+def _render_mapped_floor(
+    original: Image.Image,
+    outline: Sequence[PixelPoint],
+    inverse: Matrix,
+    texture: Image.Image,
+) -> Image.Image:
+    validate_polygon(outline)
     projected = _project_texture(original.size, outline, inverse, texture)
 
     source = original.convert("RGBA")
-    mask = _rasterize_outline(source.size, outline)
+    mask = rasterize_polygon(source.size, outline)
     shade = source.convert("L").point(
         lambda brightness: round(160 + (95 / 255) * brightness)
     )

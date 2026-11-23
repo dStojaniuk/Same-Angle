@@ -1,5 +1,5 @@
 import { cameraFields, cameraRange, type CameraSettings } from "./camera";
-import type { RoomPhoto } from "./photo";
+import { photoSha256, type RoomPhoto } from "./photo";
 import {
   bedHeightLimits,
   bedSizeLimits,
@@ -47,10 +47,7 @@ async function fingerprint(photo: RoomPhoto): Promise<PhotoReference> {
     source = await response.blob();
   }
 
-  const bytes = await crypto.subtle.digest("SHA-256", await source.arrayBuffer());
-  const sha256 = Array.from(new Uint8Array(bytes), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+  const sha256 = await photoSha256(source);
   return { name: photo.name, width: photo.width, height: photo.height, sha256 };
 }
 

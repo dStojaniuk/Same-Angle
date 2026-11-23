@@ -21,6 +21,7 @@ type PhotoViewportProps = {
     faces: ProjectedBedFace[];
     guides: [Point, Point][];
     anchor: Point | null;
+    helpId?: string;
     onPlace: (point?: Point) => void;
   };
   tool: "points" | "pan" | "outline";
@@ -28,6 +29,12 @@ type PhotoViewportProps = {
   zoom: number;
   comparison: { url: string; split: number } | null;
   grid?: { corners: Point[]; locked: boolean };
+  styleRegions?: { points: Point[]; kind: "editable" | "protected" }[];
+  annotations?: {
+    lines: { points: [Point, Point]; kind: "fit" | "mark" | "check" }[];
+    start: Point | null;
+    onPoint?: (point: Point) => void;
+  };
 };
 
 const arrowSteps = new Map([
@@ -54,9 +61,12 @@ export function PhotoViewport({
   comparison,
   grid,
   bedPreview,
+  annotations,
+  styleRegions,
 }: PhotoViewportProps) {
   const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
   const [bedCursor, setBedCursor] = useState<Point | null>(null);
+  const [edgeCursor, setEdgeCursor] = useState<Point | null>(null);
 
   const frame = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -66,7 +76,7 @@ export function PhotoViewport({
   );
   const drag = useRef<Drag | null>(null);
 
-  const editing = comparison === null && !bedPreview;
+  const editing = comparison === null && !bedPreview && !annotations;
   const panning = tool === "pan";
   const movingOutline = tool === "outline";
 
@@ -173,6 +183,22 @@ export function PhotoViewport({
             draggable={false}
             style={comparison ? { clipPath: `inset(0 ${100 - comparison.split}% 0 0)` } : undefined}
           />
+          {editing && Boolean(styleRegions?.length) && (
+            <svg
+              className="outline-overlay style-regions"
+              aria-hidden="true"
+              viewBox={`0 0 ${photo.width} ${photo.height}`}
+            >
+              {styleRegions?.map(({ points, kind }, index) => (
+                <polygon
+                  key={index}
+                  className={kind}
+                  points={points.map(({ x, y }) => `${x},${y}`).join(" ")}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </svg>
+          )}
           {editing && (
             <>
               {!grid && tool === "points" && (
@@ -180,9 +206,9 @@ export function PhotoViewport({
                   type="button"
                   className="place-point"
                   ref={addPoint}
-                  aria-label="Add floor point"
+                  aria-label={styleRegions ? "Add mask point" : "Add floor point"}
                   disabled={outline.length >= MAX_OUTLINE_POINTS}
-                  aria-describedby="outline-help"
+                  aria-describedby={styleRegions ? "style-mask-help" : "outline-help"}
                   onClick={(event) => {
                     const point = event.detail
                       ? photoPosition(event)
@@ -223,8 +249,10 @@ export function PhotoViewport({
                     className={grid ? "floor-point grid-corner" : "floor-point"}
                     disabled={locked}
                     key={index}
-                    aria-label={`${grid ? "Grid corner" : "Floor point"} ${index + 1}`}
-                    aria-describedby={grid ? "grid-help" : "outline-help"}
+                    aria-label={`${grid ? "Grid corner" : styleRegions ? "Mask point" : "Floor point"} ${index + 1}`}
+                    aria-describedby={
+                      grid ? "grid-help" : styleRegions ? "style-mask-help" : "outline-help"
+                    }
                     style={{
                       left: `${(x / photo.width) * 100}%`,
                       top: `${(y / photo.height) * 100}%`,
@@ -292,7 +320,7 @@ export function PhotoViewport({
                   type="button"
                   className="place-point"
                   aria-label="Place bed on the photo"
-                  aria-describedby="bed-help"
+                  aria-describedby={bedPreview.helpId ?? "bed-help"}
                   onBlur={() => setBedCursor(null)}
                   onClick={(event) => {
                     if (event.detail) {
@@ -322,6 +350,72 @@ export function PhotoViewport({
 
                     setBedCursor(point);
                     bedPreview.onPlace(point);
+                  }}
+                />
+              )}
+            </>
+          )}
+          {annotations && (
+            <>
+              <svg
+                className="bed-overlay calibration-overlay"
+                aria-hidden="true"
+                viewBox={`0 0 ${photo.width} ${photo.height}`}
+              >
+                {annotations.lines.map(({ points: [a, b], kind }, index) => (
+                  <line
+                    key={index}
+                    className={kind}
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+                {[annotations.start, edgeCursor].map(
+                  (point, index) =>
+                    point && (
+                      <circle
+                        key={index}
+                        cx={point.x}
+                        cy={point.y}
+                        r={Math.min(photo.width, photo.height) / 160}
+                      />
+                    ),
+                )}
+              </svg>
+              {annotations.onPoint && !panning && (
+                <button
+                  type="button"
+                  className="place-point"
+                  aria-label="Mark edge endpoint on photo"
+                  aria-describedby="calibration-help"
+                  onBlur={() => setEdgeCursor(null)}
+                  onClick={(event) => {
+                    const point = event.detail
+                      ? photoPosition(event)
+                      : (edgeCursor ?? {
+                          x: photo.width / 2,
+                          y: photo.height / 2,
+                        });
+                    annotations.onPoint?.(limitToPhoto(point, photo));
+                  }}
+                  onKeyDown={(event) => {
+                    const step = arrowSteps.get(event.key);
+                    if (!step) return;
+                    event.preventDefault();
+                    const amount = event.shiftKey ? 10 : 1;
+                    const origin = edgeCursor ?? { x: photo.width / 2, y: photo.height / 2 };
+                    setEdgeCursor(
+                      limitToPhoto(
+                        {
+                          x: origin.x + step.x * amount,
+                          y: origin.y + step.y * amount,
+                        },
+                        photo,
+                      ),
+                    );
                   }}
                 />
               )}

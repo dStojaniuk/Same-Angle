@@ -877,3 +877,75 @@ h2 {
 .snapshot-action output {
   font-size: 13px;
 }
+
+.calibration-overlay {
+  stroke-width: 2;
+}
+
+.calibration-overlay .fit {
+  stroke: #41e2d0;
+  stroke-dasharray: 6 4;
+}
+
+.calibration-overlay .mark {
+  stroke: #ffd26b;
+}
+
+.calibration-overlay circle {
+  stroke: #182625;
+  fill: #ffd26b;
+}
+
+.calibration-overlay .check {
+  stroke: #ffc2f1;
+}
+
+.calibration-fields {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.calibration-fields label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.calibration-fields input,
+.calibration-fields select {
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+}
+
+.calibration-checks {
+  padding-inline-start: 1rem;
+}
+
+.studio-heading[hidden],
+.studio-layout[hidden] {
+  display: none;
+}
+
+.style-regions .editable {
+  stroke: #ffd26b;
+  fill: #ffd26b2b;
+}
+
+.style-regions .protected {
+  stroke: #63e3c2;
+  fill: #63e3c24f;
+}
+
+.style-field {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.style-field textarea,
+.style-field input,
+.style-field select {
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+}

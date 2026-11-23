@@ -38,6 +38,17 @@ export const initialCameraSettings: CameraSettings = {
 
 export type FloorPoint = { x: number; z: number };
 export type FloorBounds = FloorPoint & { width: number; length: number };
+export type FloorProjection = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
 type WorldPoint = FloorPoint & { y: number };
 
 const radians = Math.PI / 180;
@@ -126,22 +137,49 @@ export function createCameraProjection(photo: PhotoSize, settings: CameraSetting
     return clipped.length < 3 ? [] : clipped.map(toPhoto);
   }
 
-  function pointOnFloor(point: Point): FloorPoint | null {
+  function ray(point: Point): WorldPoint {
     const imageX = (point.x - centerX) / focalPixels;
     const imageY = (centerY - point.y) / focalPixels;
     const alongRight = imageX * cosRoll - imageY * sinRoll;
     const alongUp = imageX * sinRoll + imageY * cosRoll;
-    const rayY = forward.y + alongUp * up.y;
-    if (rayY >= 0) return null;
-
-    const depth = -settings.heightMeters / rayY;
-    if (depth < nearMeters) return null;
-
     return {
-      x: position.x + depth * (forward.x + alongRight * right.x + alongUp * up.x),
-      z: position.z + depth * (forward.z + alongRight * right.z + alongUp * up.z),
+      x: forward.x + alongRight * right.x + alongUp * up.x,
+      y: forward.y + alongUp * up.y,
+      z: forward.z + alongRight * right.z + alongUp * up.z,
     };
   }
 
-  return { position, project, projectLine, projectFace, pointOnFloor };
+  function pointOnFloor(point: Point): FloorPoint | null {
+    const direction = ray(point);
+    if (direction.y >= 0) return null;
+
+    const depth = -settings.heightMeters / direction.y;
+    if (depth < nearMeters) return null;
+
+    return {
+      x: position.x + depth * direction.x,
+      z: position.z + depth * direction.z,
+    };
+  }
+
+  function floorProjection(tileMeters: number): FloorProjection {
+    // At y = 0, the ray travels height / -ray.y. The last row is that divisor.
+    const origin = ray({ x: 0, y: 0 });
+    const across = ray({ x: 1, y: 0 });
+    const down = ray({ x: 0, y: 1 });
+    const column = (direction: WorldPoint) => {
+      const w = -direction.y;
+      return [
+        (position.x * w + settings.heightMeters * direction.x) / tileMeters,
+        (position.z * w + settings.heightMeters * direction.z) / tileMeters,
+        w,
+      ];
+    };
+    const [u, v, w] = column(origin);
+    const [ux, vx, wx] = column(across);
+    const [uy, vy, wy] = column(down);
+    return [ux - u, uy - u, u, vx - v, vy - v, v, wx - w, wy - w, w];
+  }
+
+  return { position, project, projectLine, projectFace, pointOnFloor, floorProjection };
 }

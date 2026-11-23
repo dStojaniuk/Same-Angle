@@ -11,6 +11,7 @@ export function supportsSnapshotSize({ width, height }: PhotoSize): boolean {
 export async function renderRoomSnapshot(
   photo: RoomPhoto,
   faces: ProjectedBedFace[],
+  { markScale = true } = {},
 ): Promise<Blob> {
   const image = new Image();
   image.src = photo.url;
@@ -48,15 +49,17 @@ export async function renderRoomSnapshot(
       context.stroke();
     }
 
-    const fontSize = Math.max(12, pixelScale / 36);
-    const padding = fontSize * 0.6;
-    context.font = `600 ${fontSize}px system-ui, sans-serif`;
-    context.textBaseline = "top";
-    const textWidth = Math.min(context.measureText(scaleLabel).width, photo.width - 4 * padding);
-    context.fillStyle = "#172a2ce8";
-    context.fillRect(padding, padding, textWidth + 2 * padding, fontSize + 2 * padding);
-    context.fillStyle = "#fcfdf9";
-    context.fillText(scaleLabel, 2 * padding, 2 * padding, textWidth);
+    if (markScale) {
+      const fontSize = Math.max(12, pixelScale / 36);
+      const padding = fontSize * 0.6;
+      context.font = `600 ${fontSize}px system-ui, sans-serif`;
+      context.textBaseline = "top";
+      const textWidth = Math.min(context.measureText(scaleLabel).width, photo.width - 4 * padding);
+      context.fillStyle = "#172a2ce8";
+      context.fillRect(padding, padding, textWidth + 2 * padding, fontSize + 2 * padding);
+      context.fillStyle = "#fcfdf9";
+      context.fillText(scaleLabel, 2 * padding, 2 * padding, textWidth);
+    }
 
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("The browser could not encode the view as PNG.");

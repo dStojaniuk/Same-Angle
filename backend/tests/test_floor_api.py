@@ -53,3 +53,56 @@ def test_requires_preparation_for_png_with_cicp_color_metadata() -> None:
     with pytest.raises(HTTPException, match="prepare it for rendering") as error:
         api.render_photo(photo, PLAN)
     assert error.value.status_code == 422
+
+
+def test_renders_calibrated_tiles_and_protects_pixels_outside_the_outline() -> None:
+    plan = """{
+        "width": 64,
+        "height": 64,
+        "outline": [[4, 33], [60, 33], [60, 60], [4, 60]],
+        "projection": [0.02, 0, -0.64, 0, 0, 1, 0, 0.02, -0.64]
+    }"""
+    with BytesIO() as original:
+        Image.new("RGBA", (64, 64), (48, 63, 76, 222)).save(original, "PNG")
+        png = original.getvalue()
+
+    response = api.render_photo(UploadFile(BytesIO(png), size=len(png)), plan)
+
+    with Image.open(BytesIO(response.body)) as result:
+        assert result.getpixel((32, 32)) == (48, 63, 76, 222)
+        edited = result.getpixel((32, 45))
+        assert isinstance(edited, tuple)
+        assert edited != (48, 63, 76, 222)
+        assert edited[3] == 222
+
+
+@pytest.mark.parametrize(
+    ("surface", "message"),
+    [
+        (
+            '"projection": [0.02, 0, -0.64, 0, 0, 1, 0, 0.02, -0.8]',
+            "below the calibrated horizon",
+        ),
+        (
+            (
+                '"corners": [[4, 33], [60, 33], [60, 60], [4, 60]], '
+                '"projection": [0.02, 0, -0.64, 0, 0, 1, 0, 0.02, -0.64]'
+            ),
+            "four grid corners or a calibrated floor projection",
+        ),
+    ],
+)
+def test_rejects_an_unsafe_or_ambiguous_calibrated_plan(
+    surface: str, message: str
+) -> None:
+    plan = (
+        '{"width": 64, "height": 64, '
+        '"outline": [[4, 33], [60, 33], [60, 60], [4, 60]], ' + surface + "}"
+    )
+    with BytesIO() as original:
+        Image.new("RGB", (64, 64)).save(original, "PNG")
+        png = original.getvalue()
+
+    with pytest.raises(HTTPException, match=message) as error:
+        api.render_photo(UploadFile(BytesIO(png), size=len(png)), plan)
+    assert error.value.status_code == 422

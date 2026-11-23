@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 
 import { placeBedOnPhoto, projectBed, projectFloorGuides } from "./bed";
 import { BedControls, BedViews } from "./BedPreview";
+import { CalibrationEditor } from "./CalibrationEditor";
 import { createCameraProjection, type FloorPoint } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
 import { renderFloor } from "./floorRender";
@@ -13,6 +14,7 @@ import { changeLayout, initialBed, startLayout } from "./roomLayout";
 import { PlanControls, RoomPlan } from "./RoomPlan";
 import { SceneFiles } from "./SceneFiles";
 import { SnapshotButton } from "./SnapshotButton";
+import { StyleEditor } from "./StyleEditor";
 import { useBedViews } from "./useBedViews";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
@@ -21,8 +23,19 @@ type EditorMode =
   | { kind: "outline" }
   | { kind: "grid" }
   | { kind: "bed" }
+  | { kind: "calibration" }
+  | { kind: "style" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
-type FocusTarget = "grid" | "sample" | "render" | "slider" | "camera" | "preview-bed" | "plan";
+type FocusTarget =
+  | "grid"
+  | "sample"
+  | "render"
+  | "slider"
+  | "camera"
+  | "preview-bed"
+  | "plan"
+  | "calibration"
+  | "style";
 
 type RoomEditorProps = {
   photo: RoomPhoto;
@@ -285,20 +298,71 @@ export function RoomEditor({
     setRendering(false);
   }
 
+  const floorSaveStatus = (
+    <>
+      {saveMessage && (
+        <output className="save-status">
+          {mode.kind === "calibration" && "Floor outline · "}
+          {saveMessage}
+        </output>
+      )}
+      {onRetrySave && (
+        <button type="button" className="text-button retry-save" onClick={onRetrySave}>
+          Retry save
+        </button>
+      )}
+      {onOpenSavedVersion && (
+        <button
+          type="button"
+          className="text-button retry-save"
+          disabled={movingGeometry}
+          onClick={onOpenSavedVersion}
+        >
+          Save draft copy and open saved version
+        </button>
+      )}
+    </>
+  );
+
   return (
     <main className="studio" inert={recoveringConflict}>
-      <div className="studio-heading">
+      <CalibrationEditor
+        active={mode.kind === "calibration"}
+        photo={photo}
+        outline={outline}
+        saveStatus={floorSaveStatus}
+        onBack={() => changeMode({ kind: "outline" }, "calibration")}
+      />
+      <StyleEditor
+        active={mode.kind === "style"}
+        photo={photo}
+        onBack={() => changeMode({ kind: "outline" }, "style")}
+      />
+      <div className="studio-heading" hidden={mode.kind === "calibration" || mode.kind === "style"}>
         <h1 ref={headingRef} tabIndex={-1}>
           Room editor
         </h1>
-        {photo !== sampleRoom && (
-          <button type="button" className="text-button" onClick={onOpenSample}>
-            Open sample room
-          </button>
-        )}
+        <div className="canvas-actions">
+          {mode.kind === "outline" && (
+            <button
+              type="button"
+              className="text-button"
+              ref={focusAfterSwitch("style")}
+              disabled={movingGeometry}
+              onClick={() => changeMode({ kind: "style" }, "style")}
+            >
+              Restyle room
+            </button>
+          )}
+          {photo !== sampleRoom && (
+            <button type="button" className="text-button" onClick={onOpenSample}>
+              Open sample room
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="studio-layout">
+      <div className="studio-layout" hidden={mode.kind === "calibration" || mode.kind === "style"}>
         <section className="canvas" aria-label="Photo workspace" hidden={showPlan}>
           <div className="canvas-header">
             <div className="photo-details">
@@ -306,24 +370,7 @@ export function RoomEditor({
               <span>
                 {viewportPhoto.width} × {viewportPhoto.height} px
               </span>
-              {showFloorSave && saveMessage && (
-                <output className="save-status">{saveMessage}</output>
-              )}
-              {showFloorSave && onRetrySave && (
-                <button type="button" className="text-button retry-save" onClick={onRetrySave}>
-                  Retry save
-                </button>
-              )}
-              {showFloorSave && onOpenSavedVersion && (
-                <button
-                  type="button"
-                  className="text-button retry-save"
-                  disabled={movingGeometry}
-                  onClick={onOpenSavedVersion}
-                >
-                  Save draft copy and open saved version
-                </button>
-              )}
+              {mode.kind !== "calibration" && showFloorSave && floorSaveStatus}
             </div>
             <div className="canvas-actions">
               <button
@@ -606,6 +653,15 @@ export function RoomEditor({
                   onClick={() => changeMode({ kind: "bed" }, "camera")}
                 >
                   Preview a bed
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  ref={focusAfterSwitch("calibration")}
+                  disabled={outline.length < 3 || movingGeometry}
+                  onClick={() => changeMode({ kind: "calibration" }, "calibration")}
+                >
+                  Calibrate and arrange
                 </button>
                 {sampleComparisonUrl && (
                   <button

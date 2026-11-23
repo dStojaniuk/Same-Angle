@@ -9,7 +9,13 @@ from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngImageFile
 from pydantic import BaseModel, Field, ValidationError
 
-from same_angle.floor import oak_texture, render_floor
+from same_angle.floor import Matrix, oak_texture, render_calibrated_floor, render_floor
+from same_angle.style import composite_style, style_mask
+from same_angle.style_provider import (
+    StyleProviderError,
+    edit_with_openai,
+    style_provider_configured,
+)
 
 app = FastAPI(title="Same Angle local renderer")
 MAX_PHOTO_BYTES = 25 * 1024 * 1024
@@ -19,6 +25,8 @@ MAX_PHOTO_PIXELS = 24_000_000
 MAX_PLAN_BYTES = 8192
 MAX_OUTLINE_POINTS = 128
 RENDER_PATH = "/api/floor-render"
+STYLE_PATH = "/api/style-render"
+MAX_STYLE_PLAN_BYTES = 32 * 1024
 
 type Coordinate = Annotated[int, Field(ge=0, strict=True)]
 type Point = tuple[Coordinate, Coordinate]
@@ -29,7 +37,21 @@ class FloorPlan(BaseModel):
     width: Dimension
     height: Dimension
     outline: Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
-    corners: Annotated[list[Point], Field(min_length=4, max_length=4)]
+    corners: Annotated[list[Point], Field(min_length=4, max_length=4)] | None = None
+    projection: Matrix | None = None
+
+
+type Region = Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
+type Regions = Annotated[list[Region], Field(min_length=1, max_length=8)]
+
+
+class StylePlan(BaseModel):
+    width: Dimension
+    height: Dimension
+    editable: Regions
+    protected: Regions
+    prompt: Annotated[str, Field(min_length=1, max_length=2000)]
+    feather_edges: Annotated[bool, Field(strict=True)] = True
 
 
 def _has_cicp(file: BinaryIO) -> bool:
@@ -51,26 +73,58 @@ def _has_cicp(file: BinaryIO) -> bool:
         file.seek(position)
 
 
+def _requires_prepared_png(image: PngImageFile, file: BinaryIO, bit_depth: int) -> bool:
+    profile = image.info.get("icc_profile")
+    unsupported_color = (
+        image.mode not in {"RGB", "RGBA"}
+        if profile
+        else "srgb" not in image.info
+        and ("gamma" in image.info or "chromaticity" in image.info)
+    )
+    return (
+        bit_depth > 8
+        or image.get_format_mimetype() == "image/apng"
+        or unsupported_color
+        or _has_cicp(file)
+    )
+
+
 @app.middleware("http")
 async def limit_render_request(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    if request.method == "POST" and request.url.path == RENDER_PATH:
+    if request.method == "POST" and request.url.path in {RENDER_PATH, STYLE_PATH}:
         length = request.headers.get("content-length", "")
         if not length.isascii() or not length.isdecimal() or len(length) > 12:
             return JSONResponse(
                 {"detail": "Send the photo with its content length."}, status_code=411
             )
-        if int(length) > MAX_WORKING_PNG_BYTES + 2 * MAX_PLAN_BYTES:
-            return JSONResponse(
-                {"detail": "The working photo exceeds 100 MiB."}, status_code=413
+        limit = (
+            2 * MAX_WORKING_PNG_BYTES + 2 * MAX_STYLE_PLAN_BYTES
+            if request.url.path == STYLE_PATH
+            else MAX_WORKING_PNG_BYTES + 2 * MAX_PLAN_BYTES
+        )
+        if int(length) > limit:
+            message = (
+                "The style render request is too large."
+                if request.url.path == STYLE_PATH
+                else "The working photo exceeds 100 MiB."
             )
+            return JSONResponse({"detail": message}, status_code=413)
     return await call_next(request)
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/style-status")
+def style_status() -> JSONResponse:
+    return JSONResponse(
+        {"configured": style_provider_configured()},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post(
@@ -90,29 +144,20 @@ def render_photo(
     except ValidationError as error:
         raise HTTPException(
             422,
-            f"Send the photo size, 3 to {MAX_OUTLINE_POINTS} outline points, and four grid corners.",
+            f"Send the photo size, 3 to {MAX_OUTLINE_POINTS} outline points, and a floor projection.",
         ) from error
+
+    if (approved.corners is None) == (approved.projection is None):
+        raise HTTPException(
+            422, "Send four grid corners or a calibrated floor projection."
+        )
 
     try:
         # PNG stores the bit depth in IHDR, even when Pillow decodes to an 8-bit mode.
         header = photo.file.read(25)
         with Image.open(photo.file, formats=["JPEG", "PNG", "WEBP"]) as source:
             if isinstance(source, PngImageFile):
-                unsupported_color = (
-                    not source.info.get("icc_profile")
-                    and "srgb" not in source.info
-                    and ("gamma" in source.info or "chromaticity" in source.info)
-                ) or (
-                    source.info.get("icc_profile")
-                    and source.mode not in {"RGB", "RGBA"}
-                )
-
-                if (
-                    header[24] > 8
-                    or source.get_format_mimetype() == "image/apng"
-                    or unsupported_color
-                    or _has_cicp(photo.file)
-                ):
+                if _requires_prepared_png(source, photo.file, header[24]):
                     raise HTTPException(
                         422,
                         "Open this photo in the editor to prepare it for rendering.",
@@ -130,9 +175,15 @@ def render_photo(
                     "The approved outline and grid must match the oriented photo size.",
                 )
 
-            result = render_floor(
-                original, approved.outline, approved.corners, oak_texture()
-            )
+            if approved.projection is not None:
+                result = render_calibrated_floor(
+                    original, approved.outline, approved.projection, oak_texture()
+                )
+            else:
+                assert approved.corners is not None
+                result = render_floor(
+                    original, approved.outline, approved.corners, oak_texture()
+                )
             profile = (
                 original.info.get("icc_profile")
                 if original.mode in {"RGB", "RGBA"}
@@ -153,3 +204,80 @@ def render_photo(
             media_type="image/png",
             headers={"Cache-Control": "no-store"},
         )
+
+
+@app.post(
+    STYLE_PATH,
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
+def render_style(
+    photo: Annotated[UploadFile, File()],
+    plan: Annotated[str, Form(max_length=MAX_STYLE_PLAN_BYTES)],
+    candidate: Annotated[UploadFile | None, File()] = None,
+) -> Response:
+    uploads = (photo,) if candidate is None else (photo, candidate)
+    if any(
+        upload.size is not None and upload.size > MAX_WORKING_PNG_BYTES
+        for upload in uploads
+    ):
+        raise HTTPException(413, "Each working image must be at most 100 MiB.")
+
+    try:
+        approved = StylePlan.model_validate_json(plan)
+        if not approved.prompt.strip():
+            raise ValueError("Describe the style change in the prompt.")
+    except ValidationError as error:
+        raise HTTPException(
+            422, "Send the photo size, prompt, and editable and protected regions."
+        ) from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    try:
+        original = read_style_image(photo.file)
+        if original.size != (approved.width, approved.height):
+            raise ValueError("The approved regions must match the oriented photo size.")
+        allowed = style_mask(original.size, approved.editable, approved.protected)
+
+        if candidate is None:
+            result = edit_with_openai(original, allowed, approved.prompt)
+            edited = read_style_image(BytesIO(result))
+        else:
+            edited = read_style_image(candidate.file)
+
+        composite = composite_style(
+            original, edited, allowed, feather_edges=approved.feather_edges
+        )
+    except StyleProviderError as error:
+        raise HTTPException(503, str(error)) from error
+    except (Image.DecompressionBombError, OSError) as error:
+        raise HTTPException(
+            422, "Use a readable static image of at most 24 megapixels."
+        ) from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    with BytesIO() as output:
+        composite.save(
+            output, format="PNG", icc_profile=original.info.get("icc_profile")
+        )
+        return Response(
+            output.getvalue(),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+
+def read_style_image(file: BinaryIO) -> Image.Image:
+    header = file.read(25)
+    with Image.open(file, formats=["PNG", "JPEG", "WEBP"]) as opened:
+        if opened.width * opened.height > MAX_PHOTO_PIXELS or getattr(
+            opened, "is_animated", False
+        ):
+            raise ValueError("Use a static image of at most 24 megapixels.")
+        if isinstance(opened, PngImageFile) and _requires_prepared_png(
+            opened, file, header[24]
+        ):
+            raise ValueError("Prepare the style image as a static 8-bit sRGB PNG.")
+        return ImageOps.exif_transpose(opened)

@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 async function addStyleMasks(page: Page) {
   async function mark(points: number[][]) {
@@ -82,6 +84,73 @@ test("starts generation from a prompt without an imported candidate", async ({ p
   expect(captured.plan.editable[0]).toHaveLength(4);
   expect(captured.plan.protected[0]).toHaveLength(4);
 });
+
+for (const input of [
+  {
+    name: "the sample room",
+    width: 1440,
+    height: 960,
+    filename: "Sample room-prepared.webp",
+    signature: [87, 69, 66, 80],
+    signatureOffset: 8,
+  },
+  {
+    name: "an uploaded JPEG with rotation metadata",
+    fixture: "tests/fixtures/rotated-room.jpg",
+    width: 140,
+    height: 240,
+    filename: "rotated-room-prepared.png",
+    signature: [137, 80, 78, 71, 13, 10, 26, 10],
+    signatureOffset: 0,
+  },
+]) {
+  test(`downloads a Codex plan and prepared photo for ${input.name} without an API key`, async ({
+    page,
+  }) => {
+    await page.route("**/api/style-status", (route) =>
+      route.fulfill({ json: { configured: false } }),
+    );
+    await page.goto("/");
+    if (input.fixture) await page.getByLabel("Room photo").setInputFiles(input.fixture);
+    await page.getByRole("button", { name: "Restyle room" }).click();
+    await page.getByLabel("Style prompt").fill("Replace the panels with wallpaper.");
+    await page.getByRole("checkbox", { name: "Feather mask edges" }).uncheck();
+
+    const exportPlan = page.getByRole("button", { name: "Download Codex plan" });
+    await expect(exportPlan).toBeDisabled();
+    await addStyleMasks(page);
+    await expect(page.getByRole("button", { name: "Generate with OpenAI" })).toBeDisabled();
+
+    const planDownload = page.waitForEvent("download");
+    await exportPlan.click();
+    const planFile = await planDownload;
+    const plan = JSON.parse(await readFile(await planFile.path(), "utf8"));
+
+    const photoDownload = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download prepared photo" }).click();
+    const photo = await photoDownload;
+    const bytes = await readFile(await photo.path());
+
+    expect(photo.suggestedFilename()).toBe(input.filename);
+    expect(
+      bytes.subarray(input.signatureOffset, input.signatureOffset + input.signature.length),
+    ).toEqual(Buffer.from(input.signature));
+    if (input.fixture) {
+      expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([input.width, input.height]);
+    }
+    expect(plan).toMatchObject({
+      width: input.width,
+      height: input.height,
+      prompt: "Replace the panels with wallpaper.",
+      feather_edges: false,
+      source_sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(plan.editable).toHaveLength(1);
+    expect(plan.protected).toHaveLength(1);
+    expect(plan.editable[0]).toHaveLength(4);
+    expect(plan.protected[0]).toHaveLength(4);
+  });
+}
 
 for (const state of ["missing", "unavailable"] as const) {
   test(`rechecks generation after ${state} setup without requiring a new draft`, async ({

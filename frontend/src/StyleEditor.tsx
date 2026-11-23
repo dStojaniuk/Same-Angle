@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
+import { downloadBlob } from "./download";
 import type { Point } from "./outline";
 import type { RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
 import {
+  exportStylePlan,
   maxStylePrompt,
   maxStyleRegions,
   renderStyle,
@@ -34,6 +36,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
   const [regions, setRegions] = useState<StyleRegion[]>([]);
   const [candidate, setCandidate] = useState<File | null>(null);
   const [rendering, setRendering] = useState(false);
+  const [exportingPlan, setExportingPlan] = useState(false);
   const [error, setError] = useState("");
   const [comparisonUrl, setComparisonUrl] = useState<string | null>(null);
   const [split, setSplit] = useState(50);
@@ -109,6 +112,21 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
     request.current?.abort();
     request.current = null;
     setRendering(false);
+  }
+
+  async function saveStylePlan() {
+    if (!canRender || exportingPlan) return;
+
+    setExportingPlan(true);
+    setError("");
+    try {
+      const plan = await exportStylePlan(photo, prompt, regions, featherEdges);
+      downloadBlob(plan, `${basename}-style-plan.json`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The Codex plan could not be saved.");
+    } finally {
+      setExportingPlan(false);
+    }
   }
 
   async function arrange(imported: File | null) {
@@ -337,6 +355,27 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
                   Check generation setup again
                 </button>
               )}
+              <fieldset className="style-field" aria-label="Codex CLI files">
+                <legend>Codex CLI</legend>
+                <p>
+                  Use both files with <code>$same-angle-redesign</code>.
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!canRender || exportingPlan}
+                  onClick={() => void saveStylePlan()}
+                >
+                  Download Codex plan
+                </button>
+                <a
+                  className="secondary-button download-button"
+                  href={photo.url}
+                  download={`${basename}-prepared.${photo.source ? "png" : "webp"}`}
+                >
+                  Download prepared photo
+                </a>
+              </fieldset>
               <label className="style-field">
                 Import edited photo
                 <input

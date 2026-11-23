@@ -27,6 +27,11 @@ export const sampleRoom: RoomPhoto = {
   ],
 };
 
+export async function photoSha256(photo: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await photo.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 const jpegSignature = [255, 216, 255];
 const pngImageData = 0x49444154; // IDAT

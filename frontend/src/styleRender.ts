@@ -1,5 +1,5 @@
 import type { Point } from "./outline";
-import type { RoomPhoto } from "./photo";
+import { photoSha256, type RoomPhoto } from "./photo";
 import { readRenderedPng } from "./renderedPhoto";
 
 export const maxStyleRegions = 8;
@@ -48,6 +48,24 @@ function createStylePlan(
     protected: polygons("protected"),
     ...(featherEdges ? {} : { feather_edges: false }),
   };
+}
+
+export async function exportStylePlan(
+  photo: RoomPhoto,
+  prompt: string,
+  regions: StyleRegion[],
+  featherEdges: boolean,
+): Promise<Blob> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Codex plans require localhost or a secure connection.");
+  }
+
+  const plan = createStylePlan(photo, prompt, regions, featherEdges);
+  const source = await readWorkingPhoto(photo);
+  const sourceDigest = await photoSha256(source);
+  return new Blob([JSON.stringify({ ...plan, source_sha256: sourceDigest }, null, 2)], {
+    type: "application/json",
+  });
 }
 
 export async function renderStyle(

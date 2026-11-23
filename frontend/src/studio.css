@@ -925,3 +925,27 @@ h2 {
 .studio-layout[hidden] {
   display: none;
 }
+
+.style-regions .editable {
+  stroke: #ffd26b;
+  fill: #ffd26b2b;
+}
+
+.style-regions .protected {
+  stroke: #63e3c2;
+  fill: #63e3c24f;
+}
+
+.style-field {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.style-field textarea,
+.style-field input,
+.style-field select {
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+}

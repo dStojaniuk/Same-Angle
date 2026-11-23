@@ -29,6 +29,7 @@ type PhotoViewportProps = {
   zoom: number;
   comparison: { url: string; split: number } | null;
   grid?: { corners: Point[]; locked: boolean };
+  styleRegions?: { points: Point[]; kind: "editable" | "protected" }[];
   annotations?: {
     lines: { points: [Point, Point]; kind: "fit" | "mark" | "check" }[];
     start: Point | null;
@@ -61,6 +62,7 @@ export function PhotoViewport({
   grid,
   bedPreview,
   annotations,
+  styleRegions,
 }: PhotoViewportProps) {
   const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
   const [bedCursor, setBedCursor] = useState<Point | null>(null);
@@ -181,6 +183,22 @@ export function PhotoViewport({
             draggable={false}
             style={comparison ? { clipPath: `inset(0 ${100 - comparison.split}% 0 0)` } : undefined}
           />
+          {editing && Boolean(styleRegions?.length) && (
+            <svg
+              className="outline-overlay style-regions"
+              aria-hidden="true"
+              viewBox={`0 0 ${photo.width} ${photo.height}`}
+            >
+              {styleRegions?.map(({ points, kind }, index) => (
+                <polygon
+                  key={index}
+                  className={kind}
+                  points={points.map(({ x, y }) => `${x},${y}`).join(" ")}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </svg>
+          )}
           {editing && (
             <>
               {!grid && tool === "points" && (
@@ -188,9 +206,9 @@ export function PhotoViewport({
                   type="button"
                   className="place-point"
                   ref={addPoint}
-                  aria-label="Add floor point"
+                  aria-label={styleRegions ? "Add mask point" : "Add floor point"}
                   disabled={outline.length >= MAX_OUTLINE_POINTS}
-                  aria-describedby="outline-help"
+                  aria-describedby={styleRegions ? "style-mask-help" : "outline-help"}
                   onClick={(event) => {
                     const point = event.detail
                       ? photoPosition(event)
@@ -231,8 +249,10 @@ export function PhotoViewport({
                     className={grid ? "floor-point grid-corner" : "floor-point"}
                     disabled={locked}
                     key={index}
-                    aria-label={`${grid ? "Grid corner" : "Floor point"} ${index + 1}`}
-                    aria-describedby={grid ? "grid-help" : "outline-help"}
+                    aria-label={`${grid ? "Grid corner" : styleRegions ? "Mask point" : "Floor point"} ${index + 1}`}
+                    aria-describedby={
+                      grid ? "grid-help" : styleRegions ? "style-mask-help" : "outline-help"
+                    }
                     style={{
                       left: `${(x / photo.width) * 100}%`,
                       top: `${(y / photo.height) * 100}%`,

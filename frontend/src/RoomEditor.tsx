@@ -14,6 +14,7 @@ import { changeLayout, initialBed, startLayout } from "./roomLayout";
 import { PlanControls, RoomPlan } from "./RoomPlan";
 import { SceneFiles } from "./SceneFiles";
 import { SnapshotButton } from "./SnapshotButton";
+import { StyleEditor } from "./StyleEditor";
 import { useBedViews } from "./useBedViews";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
@@ -23,6 +24,7 @@ type EditorMode =
   | { kind: "grid" }
   | { kind: "bed" }
   | { kind: "calibration" }
+  | { kind: "style" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
 type FocusTarget =
   | "grid"
@@ -32,7 +34,8 @@ type FocusTarget =
   | "camera"
   | "preview-bed"
   | "plan"
-  | "calibration";
+  | "calibration"
+  | "style";
 
 type RoomEditorProps = {
   photo: RoomPhoto;
@@ -330,11 +333,27 @@ export function RoomEditor({
         saveStatus={floorSaveStatus}
         onBack={() => changeMode({ kind: "outline" }, "calibration")}
       />
-      <div className="studio-heading" hidden={mode.kind === "calibration"}>
+      <StyleEditor
+        active={mode.kind === "style"}
+        photo={photo}
+        onBack={() => changeMode({ kind: "outline" }, "style")}
+      />
+      <div className="studio-heading" hidden={mode.kind === "calibration" || mode.kind === "style"}>
         <h1 ref={headingRef} tabIndex={-1}>
           Room editor
         </h1>
         <div className="canvas-actions">
+          {mode.kind === "outline" && (
+            <button
+              type="button"
+              className="text-button"
+              ref={focusAfterSwitch("style")}
+              disabled={movingGeometry}
+              onClick={() => changeMode({ kind: "style" }, "style")}
+            >
+              Restyle room
+            </button>
+          )}
           {photo !== sampleRoom && (
             <button type="button" className="text-button" onClick={onOpenSample}>
               Open sample room
@@ -343,7 +362,7 @@ export function RoomEditor({
         </div>
       </div>
 
-      <div className="studio-layout" hidden={mode.kind === "calibration"}>
+      <div className="studio-layout" hidden={mode.kind === "calibration" || mode.kind === "style"}>
         <section className="canvas" aria-label="Photo workspace" hidden={showPlan}>
           <div className="canvas-header">
             <div className="photo-details">

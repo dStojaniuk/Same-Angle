@@ -36,6 +36,12 @@ def style_mask(
     return allowed
 
 
+def style_guide(original: Image.Image, allowed: Image.Image) -> Image.Image:
+    guide = original.convert("RGB")
+    guide.paste("#ffd14a", mask=allowed.point([0] * 255 + [110]))
+    return guide
+
+
 def composite_style(
     original: Image.Image,
     candidate: Image.Image,

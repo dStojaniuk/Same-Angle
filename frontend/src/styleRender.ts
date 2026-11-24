@@ -5,8 +5,13 @@ import { readRenderedPng } from "./renderedPhoto";
 export const maxStyleRegions = 8;
 export const maxStylePrompt = 2000;
 export type StyleRegion = { points: Point[]; kind: "editable" | "protected" };
+export type StyleInput =
+  | { kind: "import"; file: File }
+  | { kind: "generate"; provider: "openai" | "codex" };
+const codexStatuses = ["missing", "login_required", "ready", "unavailable"] as const;
+export type CodexStatus = (typeof codexStatuses)[number];
 
-export async function styleProviderConfigured(signal: AbortSignal): Promise<boolean> {
+export async function readStyleStatus(signal: AbortSignal) {
   const response = await fetch("/api/style-status", { signal });
   if (!response.ok) throw new Error("The generation status could not be checked.");
 
@@ -19,7 +24,9 @@ export async function styleProviderConfigured(signal: AbortSignal): Promise<bool
   ) {
     throw new Error("The renderer did not return a generation status.");
   }
-  return status.configured;
+  const codex =
+    "codex" in status ? codexStatuses.find((value) => value === status.codex) : undefined;
+  return { configured: status.configured, codex };
 }
 
 async function readWorkingPhoto(photo: RoomPhoto, signal?: AbortSignal): Promise<Blob> {
@@ -72,14 +79,15 @@ export async function renderStyle(
   photo: RoomPhoto,
   prompt: string,
   regions: StyleRegion[],
-  candidate: File | null,
+  input: StyleInput,
   signal: AbortSignal,
   featherEdges: boolean,
 ): Promise<Blob> {
   const form = new FormData();
   form.set("photo", await readWorkingPhoto(photo, signal), "room");
   form.set("plan", JSON.stringify(createStylePlan(photo, prompt, regions, featherEdges)));
-  if (candidate) form.set("candidate", candidate);
+  if (input.kind === "import") form.set("candidate", input.file);
+  else if (input.provider === "codex") form.set("provider", input.provider);
 
   return readRenderedPng(await fetch("/api/style-render", { method: "POST", body: form, signal }));
 }

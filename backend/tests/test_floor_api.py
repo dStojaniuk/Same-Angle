@@ -1,4 +1,5 @@
 from io import BytesIO
+from json import dumps, loads
 from pathlib import Path
 
 import pytest
@@ -106,3 +107,32 @@ def test_rejects_an_unsafe_or_ambiguous_calibrated_plan(
     with pytest.raises(HTTPException, match=message) as error:
         api.render_photo(UploadFile(BytesIO(png), size=len(png)), plan)
     assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("geometry", "adjust", "message"),
+    [
+        (
+            {"outline": [[30, 40], [31, 40], [30, 41]]},
+            "outline",
+            "covers floor pixels",
+        ),
+        (
+            {"corners": [[24, 46], [40, 46], [56, 61], [8, 61]]},
+            "grid",
+            "horizon stays outside",
+        ),
+    ],
+)
+def test_floor_geometry_error_names_the_editor_to_reopen(
+    geometry: dict[str, list[list[int]]], adjust: str, message: str
+) -> None:
+    original = BytesIO()
+    Image.new("RGB", (64, 64)).save(original, "PNG")
+    original.seek(0)
+    plan = dumps({**loads(PLAN), **geometry})
+
+    with pytest.raises(HTTPException, match=message) as error:
+        api.render_photo(UploadFile(original), plan, prompt="light oak")
+    assert error.value.status_code == 422
+    assert error.value.headers == {"X-Same-Angle-Floor-Adjust": adjust}

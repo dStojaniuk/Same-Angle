@@ -5,9 +5,10 @@ import { BedControls, BedViews } from "./BedPreview";
 import { CalibrationEditor } from "./CalibrationEditor";
 import { createCameraProjection, type FloorPoint } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
-import { renderFloor } from "./floorRender";
+import { FloorGeometryError, renderFloor, suggestFloor } from "./floorRender";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
 import { initialGrid, projectFloor } from "./perspective";
+import { usePerspectiveReview } from "./PerspectiveReview";
 import { sampleRoom, type RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
 import { changeLayout, initialBed, startLayout } from "./roomLayout";
@@ -25,9 +26,11 @@ type EditorMode =
   | { kind: "bed" }
   | { kind: "calibration" }
   | { kind: "style" }
+  | { kind: "quick" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
 type FocusTarget =
   | "grid"
+  | "grid-heading"
   | "sample"
   | "render"
   | "slider"
@@ -35,6 +38,7 @@ type FocusTarget =
   | "preview-bed"
   | "plan"
   | "calibration"
+  | "quick"
   | "style";
 
 type RoomEditorProps = {
@@ -79,6 +83,7 @@ export function RoomEditor({
   const [movingGeometry, setMovingGeometry] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
+  const [floorPrompt, setFloorPrompt] = useState("");
 
   const views = useBedViews(photo);
 
@@ -104,7 +109,10 @@ export function RoomEditor({
     !recoveringConflict;
   const validGrid = projectFloor(corners) !== null;
   const sampleComparisonUrl = photo.comparisonUrl;
-  const comparison = mode.kind === "comparison" ? { url: mode.url, split } : null;
+  const review = usePerspectiveReview(mode.kind === "comparison" ? mode.url : null, split, () =>
+    setPhotoTool("points"),
+  );
+  const comparison = mode.kind === "comparison" ? { url: mode.url, split: review.split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
   const showFloorSave = mode.kind !== "bed";
   const showPlan = mode.kind === "bed" && planOpen;
@@ -247,16 +255,57 @@ export function RoomEditor({
   }
 
   async function submitFloor() {
-    if (!validGrid || movingGeometry || request.current) return;
+    const quick = mode.kind === "quick";
+    if ((!quick && !validGrid) || movingGeometry || request.current) return;
+
+    const usesSampleGeometry = photo === sampleRoom && outline === photo.outline;
+    const canReuseGeometry =
+      outline.length >= 3 && (draft.corners || usesSampleGeometry) && validGrid;
+    if (quick && outline.length > 0 && !canReuseGeometry) {
+      if (outline.length >= 3) {
+        setRenderError("Align the grid to render light oak within your existing outline.");
+        changeMode({ kind: "grid" }, "grid-heading");
+      } else {
+        setRenderError("Finish your floor outline to render light oak.");
+        changeMode({ kind: "outline" }, "grid");
+      }
+      return;
+    }
 
     const controller = new AbortController();
     request.current = controller;
     setRenderError("");
     setRendering(true);
     let incomingUrl: string | null = null;
+    let geometry = { outline, corners };
 
     try {
-      const result = await renderFloor(photo, outline, corners, controller.signal);
+      const prompt = quick ? floorPrompt.trim() : undefined;
+      if (prompt !== undefined && !canReuseGeometry) {
+        const proposal = await suggestFloor(photo, prompt, controller.signal);
+        if (request.current !== controller) return;
+        if (proposal.corners && projectFloor(proposal.corners)) {
+          geometry = { outline: proposal.outline, corners: proposal.corners };
+        } else {
+          if (proposal.outline.length >= 3) {
+            dispatch({ type: "edit", draft: { outline: proposal.outline, corners: null } });
+            setRenderError("Check the suggested floor and align the grid with the wall edges.");
+            changeMode({ kind: "grid" }, "render");
+          } else {
+            setRenderError("Outline the visible floor around the threshold and furniture.");
+            changeMode({ kind: "outline" }, "grid");
+          }
+          return;
+        }
+      }
+
+      const result = await renderFloor(
+        photo,
+        geometry.outline,
+        geometry.corners,
+        controller.signal,
+        prompt,
+      );
       if (request.current !== controller) return;
 
       incomingUrl = URL.createObjectURL(result);
@@ -273,13 +322,19 @@ export function RoomEditor({
 
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
       resultUrl.current = incomingUrl;
+      if (quick && geometry.outline !== outline) dispatch({ type: "edit", draft: geometry });
       setSplit(50);
       changeMode({ kind: "comparison", url: incomingUrl, source: "render" }, "slider");
       incomingUrl = null;
     } catch (error) {
       if (request.current === controller) {
         setRenderError(error instanceof Error ? error.message : "The local render failed.");
-        focusTarget.current = "render";
+        if (quick && error instanceof FloorGeometryError) {
+          if (geometry.outline !== outline) dispatch({ type: "edit", draft: geometry });
+          changeMode({ kind: error.adjust }, error.adjust === "grid" ? "grid-heading" : "grid");
+        } else {
+          focusTarget.current = "render";
+        }
       }
     } finally {
       if (incomingUrl) URL.revokeObjectURL(incomingUrl);
@@ -344,15 +399,28 @@ export function RoomEditor({
         </h1>
         <div className="canvas-actions">
           {mode.kind === "outline" && (
-            <button
-              type="button"
-              className="text-button"
-              ref={focusAfterSwitch("style")}
-              disabled={movingGeometry}
-              onClick={() => changeMode({ kind: "style" }, "style")}
-            >
-              Restyle room
-            </button>
+            <>
+              <button
+                type="button"
+                className="text-button"
+                ref={focusAfterSwitch("style")}
+                disabled={movingGeometry}
+                onClick={() => changeMode({ kind: "style" }, "style")}
+              >
+                Restyle room
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={movingGeometry}
+                onClick={() => {
+                  setRenderError("");
+                  changeMode({ kind: "quick" }, "quick");
+                }}
+              >
+                Quick floor edit
+              </button>
+            </>
           )}
           {photo !== sampleRoom && (
             <button type="button" className="text-button" onClick={onOpenSample}>
@@ -379,7 +447,7 @@ export function RoomEditor({
                 aria-label="Pan photo"
                 aria-pressed={photoTool === "pan"}
                 title="Pan photo"
-                disabled={zoomIndex === 0 || rendering}
+                disabled={zoomIndex === 0 || rendering || review.marking}
                 onClick={() => setPhotoTool(photoTool === "pan" ? "points" : "pan")}
               >
                 Pan
@@ -430,6 +498,7 @@ export function RoomEditor({
             onGeometryMove={setMovingGeometry}
             zoom={zoomLevels[zoomIndex]}
             comparison={comparison}
+            annotations={mode.kind === "quick" ? { lines: [], start: null } : review.annotations}
           />
           {comparison && (
             <div className="comparison-control">
@@ -438,10 +507,11 @@ export function RoomEditor({
                 type="range"
                 aria-label="Before and after"
                 ref={focusAfterSwitch("slider")}
-                aria-valuetext={`${split}% original, ${100 - split}% oak`}
+                aria-valuetext={`${review.split}% original, ${100 - review.split}% oak`}
                 min={0}
                 max={100}
-                value={split}
+                value={review.split}
+                disabled={review.marking}
                 onChange={(event) => setSplit(event.currentTarget.valueAsNumber)}
               />
               <span>All original</span>
@@ -464,6 +534,7 @@ export function RoomEditor({
             <>
               <h2>Compare finishes</h2>
               <p>Move the slider to compare the original floor with oak in the same room.</p>
+              {review.controls}
               {mode.source === "sample" ? (
                 <button
                   type="button"
@@ -477,9 +548,9 @@ export function RoomEditor({
                   <a
                     className="primary-button download-button"
                     href={mode.url}
-                    download={`${photo.name.replace(/\.[^.]+$/, "") || "room"}-floor.png`}
+                    download={`${photo.name.replace(/\.[^.]+$/, "") || "room"}-${review.sketch ? "sketch" : "floor"}.png`}
                   >
-                    Download PNG
+                    {review.sketch ? "Download sketch PNG" : "Download PNG"}
                   </a>
                   <button
                     type="button"
@@ -563,9 +634,62 @@ export function RoomEditor({
                 }}
               />
             </>
+          ) : mode.kind === "quick" ? (
+            <>
+              <h2 ref={focusAfterSwitch("quick")} tabIndex={-1}>
+                Quick floor edit
+              </h2>
+              <form
+                className="style-field"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitFloor();
+                }}
+              >
+                <label className="style-field">
+                  Floor prompt
+                  <textarea
+                    rows={2}
+                    maxLength={2000}
+                    value={floorPrompt}
+                    disabled={rendering}
+                    placeholder="Change the floor to light oak"
+                    onChange={(event) => setFloorPrompt(event.currentTarget.value)}
+                  />
+                </label>
+                <p>Light oak · rendered locally on this photo.</p>
+                {renderError && (
+                  <p className="field-error" role="alert">
+                    {renderError}
+                  </p>
+                )}
+                <div className="editor-actions">
+                  <button
+                    type="submit"
+                    className="primary-button"
+                    ref={focusAfterSwitch("render")}
+                    disabled={rendering || !floorPrompt.trim()}
+                  >
+                    {rendering ? "Checking and rendering…" : "Apply floor edit"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      if (rendering) cancelRender();
+                      else changeMode({ kind: "outline" }, "grid");
+                    }}
+                  >
+                    {rendering ? "Stop waiting" : "Back to outline"}
+                  </button>
+                </div>
+              </form>
+            </>
           ) : mode.kind === "grid" ? (
             <>
-              <h2>Align the floor grid</h2>
+              <h2 ref={focusAfterSwitch("grid-heading")} tabIndex={-1}>
+                Align the floor grid
+              </h2>
               <p id="grid-help">
                 Move the four corners to match the floor. Align the long lines with the direction of
                 the boards.
@@ -615,6 +739,11 @@ export function RoomEditor({
                 Click the photo to add points. Drag a point or use the arrow keys. Press Delete to
                 remove a focused point.
               </p>
+              {renderError && (
+                <p className="field-error" role="alert">
+                  {renderError}
+                </p>
+              )}
               <div className="outline-tools">
                 <span>
                   {outline.length} {outline.length === 1 ? "point" : "points"}

@@ -2,11 +2,18 @@ from collections.abc import Sequence
 from functools import cache
 from math import ceil, floor, isfinite, sin
 from random import Random
+from typing import Literal
 
 from PIL import Image, ImageChops, ImageDraw
 
 type PixelPoint = tuple[int, int]
 type Matrix = tuple[float, float, float, float, float, float, float, float, float]
+
+
+class FloorGeometryError(ValueError):
+    def __init__(self, adjust: Literal["outline", "grid"], message: str) -> None:
+        super().__init__(message)
+        self.adjust = adjust
 
 
 def _cross(a: PixelPoint, b: PixelPoint, c: PixelPoint) -> int:
@@ -40,17 +47,20 @@ def validate_polygon(outline: Sequence[PixelPoint]) -> None:
         list(zip(outline, (*outline[1:], outline[0]), strict=True)) if outline else []
     )
     if len(edges) < 3 or len(set(outline)) != len(edges):
-        raise ValueError("Draw a floor outline with at least three distinct points.")
+        raise FloorGeometryError(
+            "outline", "Draw a floor outline with at least three distinct points."
+        )
     if sum(ax * by - ay * bx for (ax, ay), (bx, by) in edges) == 0:
-        raise ValueError("Draw a floor outline with a visible area.")
+        raise FloorGeometryError("outline", "Draw a floor outline with a visible area.")
     for i, (a, b) in enumerate(edges):
         for j in range(i + 2, len(edges)):
             if i == 0 and j == len(edges) - 1:
                 continue
             c, d = edges[j]
             if _edges_cross(a, b, c, d):
-                raise ValueError(
-                    "Move the floor outline points so its edges do not cross."
+                raise FloorGeometryError(
+                    "outline",
+                    "Move the floor outline points so its edges do not cross.",
                 )
 
 
@@ -59,8 +69,8 @@ def _photo_to_floor(corners: Sequence[PixelPoint]) -> Matrix:
         _cross(corners[i], corners[(i + 1) % 4], corners[(i + 2) % 4]) <= 0
         for i in range(4)
     ):
-        raise ValueError(
-            "Place the four grid corners in clockwise order around the floor."
+        raise FloorGeometryError(
+            "grid", "Place the four grid corners in clockwise order around the floor."
         )
 
     # Project the unit square onto the four photo corners, then invert the homography.
@@ -86,17 +96,15 @@ def _photo_to_floor(corners: Sequence[PixelPoint]) -> Matrix:
     )
 
 
-def _project_texture(
-    size: tuple[int, int],
+def _tile_bounds(
     outline: Sequence[PixelPoint],
     inverse: Matrix,
-    texture: Image.Image,
-) -> Image.Image:
+) -> tuple[int, int, int, int]:
     a, b, c, d, e, f, g, h, k = inverse
     divisors = [g * x + h * y + k for x, y in outline]
     if min(divisors) <= 0 <= max(divisors):
-        raise ValueError(
-            "Move the grid so its horizon stays outside the floor outline."
+        raise FloorGeometryError(
+            "grid", "Move the grid so its horizon stays outside the floor outline."
         )
 
     u = [(a * x + b * y + c) / w for (x, y), w in zip(outline, divisors, strict=True)]
@@ -104,8 +112,21 @@ def _project_texture(
     left, top = floor(min(u)) - 1, floor(min(v)) - 1
     columns, rows = ceil(max(u)) + 1 - left, ceil(max(v)) + 1 - top
     if max(columns, rows) > 64:
-        raise ValueError("Spread the grid corners out over more of the floor.")
+        raise FloorGeometryError(
+            "grid", "Spread the grid corners out over more of the floor."
+        )
 
+    return left, top, columns, rows
+
+
+def _project_texture(
+    size: tuple[int, int],
+    outline: Sequence[PixelPoint],
+    inverse: Matrix,
+    texture: Image.Image,
+) -> Image.Image:
+    a, b, c, d, e, f, g, h, k = inverse
+    left, top, columns, rows = _tile_bounds(outline, inverse)
     pixels_per_tile = min(texture.width, texture.height, 1536 // max(columns, rows))
     tile = texture.resize((pixels_per_tile, pixels_per_tile), Image.Resampling.BICUBIC)
     material = Image.new("RGB", (columns * pixels_per_tile, rows * pixels_per_tile))
@@ -177,6 +198,29 @@ def rasterize_polygon(
     return mask
 
 
+def _floor_mapping(
+    size: tuple[int, int],
+    outline: Sequence[PixelPoint],
+    corners: Sequence[PixelPoint],
+) -> Matrix:
+    width, height = size
+    if any(not (0 <= x <= width and 0 <= y <= height) for x, y in outline):
+        raise FloorGeometryError("outline", "Keep the outline inside the photo.")
+    if any(not (0 <= x <= width and 0 <= y <= height) for x, y in corners):
+        raise FloorGeometryError("grid", "Keep the grid corners inside the photo.")
+    return _photo_to_floor(corners)
+
+
+def validate_floor_grid(
+    size: tuple[int, int],
+    outline: Sequence[PixelPoint],
+    corners: Sequence[PixelPoint],
+) -> None:
+    inverse = _floor_mapping(size, outline, corners)
+    validate_polygon(outline)
+    _tile_bounds(outline, inverse)
+
+
 def render_floor(
     original: Image.Image,
     outline: Sequence[PixelPoint],
@@ -184,12 +228,8 @@ def render_floor(
     texture: Image.Image,
 ) -> Image.Image:
     """Replace the outlined area in oriented photo coordinates and preserve the other pixels."""
-    if any(
-        not (0 <= x <= original.width and 0 <= y <= original.height)
-        for x, y in (*outline, *corners)
-    ):
-        raise ValueError("Keep the outline and grid corners inside the photo.")
-    return _render_mapped_floor(original, outline, _photo_to_floor(corners), texture)
+    inverse = _floor_mapping(original.size, outline, corners)
+    return _render_mapped_floor(original, outline, inverse, texture)
 
 
 def render_calibrated_floor(
@@ -220,10 +260,12 @@ def _render_mapped_floor(
     texture: Image.Image,
 ) -> Image.Image:
     validate_polygon(outline)
-    projected = _project_texture(original.size, outline, inverse, texture)
+    mask = rasterize_polygon(original.size, outline)
+    if mask.getbbox() is None:
+        raise FloorGeometryError("outline", "Draw an outline that covers floor pixels.")
 
+    projected = _project_texture(original.size, outline, inverse, texture)
     source = original.convert("RGBA")
-    mask = rasterize_polygon(source.size, outline)
     shade = source.convert("L").point(
         lambda brightness: round(160 + (95 / 255) * brightness)
     )

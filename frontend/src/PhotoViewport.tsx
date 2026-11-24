@@ -33,7 +33,9 @@ type PhotoViewportProps = {
   annotations?: {
     lines: { points: [Point, Point]; kind: "fit" | "mark" | "check" }[];
     start: Point | null;
-    onPoint?: (point: Point) => void;
+    onPoint?: (point: Point, displayScale: number) => void;
+    helpId?: string;
+    focusTarget?: (element: HTMLButtonElement | null) => void;
   };
 };
 
@@ -76,6 +78,7 @@ export function PhotoViewport({
   );
   const drag = useRef<Drag | null>(null);
 
+  const focusAnnotation = annotations?.focusTarget;
   const editing = comparison === null && !bedPreview && !annotations;
   const panning = tool === "pan";
   const movingOutline = tool === "outline";
@@ -359,6 +362,7 @@ export function PhotoViewport({
             <>
               <svg
                 className="bed-overlay calibration-overlay"
+                style={comparison ? { zIndex: 1 } : undefined}
                 aria-hidden="true"
                 viewBox={`0 0 ${photo.width} ${photo.height}`}
               >
@@ -389,8 +393,10 @@ export function PhotoViewport({
                 <button
                   type="button"
                   className="place-point"
+                  ref={focusAnnotation}
                   aria-label="Mark edge endpoint on photo"
-                  aria-describedby="calibration-help"
+                  aria-describedby={annotations.helpId ?? "calibration-help"}
+                  style={comparison ? { zIndex: 1 } : undefined}
                   onBlur={() => setEdgeCursor(null)}
                   onClick={(event) => {
                     const point = event.detail
@@ -399,7 +405,9 @@ export function PhotoViewport({
                           x: photo.width / 2,
                           y: photo.height / 2,
                         });
-                    annotations.onPoint?.(limitToPhoto(point, photo));
+                    const displayScale =
+                      frame.current!.getBoundingClientRect().width / (photo.width * zoom);
+                    annotations.onPoint?.(limitToPhoto(point, photo), displayScale);
                   }}
                   onKeyDown={(event) => {
                     const step = arrowSteps.get(event.key);

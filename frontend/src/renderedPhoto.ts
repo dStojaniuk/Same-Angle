@@ -30,7 +30,7 @@ function isCompletePng(bytes: DataView): boolean {
   return false;
 }
 
-export async function readRenderedPng(response: Response): Promise<Blob> {
+export async function assertRenderResponse(response: Response) {
   if (!response.ok) {
     const error: unknown = await response.json().catch(() => null);
 
@@ -47,6 +47,10 @@ export async function readRenderedPng(response: Response): Promise<Blob> {
       "The local renderer could not complete the request. Check that Same Angle is running.",
     );
   }
+}
+
+export async function readRenderedPng(response: Response): Promise<Blob> {
+  await assertRenderResponse(response);
   if (response.headers.get("content-type") !== "image/png") {
     throw new Error("The local renderer did not return a PNG.");
   }

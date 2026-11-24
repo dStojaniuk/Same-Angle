@@ -8,7 +8,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageOps
 from pydantic import BaseModel, Field
 
 from same_angle.api import StylePlan, read_style_image
-from same_angle.style import composite_style, style_mask
+from same_angle.style import composite_style, style_guide, style_mask
 
 type Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -51,8 +51,7 @@ def prepare(photo: Path, plan_path: Path, output: Path) -> None:
         original = original.convert("RGB")
 
     allowed = style_mask(original.size, plan.editable, plan.protected)
-    guide = original.convert("RGB")
-    guide.paste("#ffd14a", mask=allowed.point([0] * 255 + [110]))
+    guide = style_guide(original, allowed)
 
     output.mkdir(mode=0o700)
     prepared_photo = output / "before.png"

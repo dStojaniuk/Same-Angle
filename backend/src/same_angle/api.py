@@ -1,15 +1,28 @@
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 from struct import unpack
-from typing import Annotated, BinaryIO
+from typing import Annotated, BinaryIO, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageOps
 from PIL.PngImagePlugin import PngImageFile
 from pydantic import BaseModel, Field, ValidationError
 
-from same_angle.floor import Matrix, oak_texture, render_calibrated_floor, render_floor
+from same_angle.codex_provider import (
+    NO_EDIT_MESSAGE,
+    CodexProviderError,
+    codex_status,
+    edit_with_codex,
+)
+from same_angle.floor import (
+    FloorGeometryError,
+    Matrix,
+    oak_texture,
+    render_calibrated_floor,
+    render_floor,
+)
+from same_angle.quick_floor import requests_oak, suggest_floor
 from same_angle.style import composite_style, style_mask
 from same_angle.style_provider import (
     StyleProviderError,
@@ -25,6 +38,7 @@ MAX_PHOTO_PIXELS = 24_000_000
 MAX_PLAN_BYTES = 8192
 MAX_OUTLINE_POINTS = 128
 RENDER_PATH = "/api/floor-render"
+FLOOR_SUGGESTION_PATH = "/api/floor-suggestion"
 STYLE_PATH = "/api/style-render"
 MAX_STYLE_PLAN_BYTES = 32 * 1024
 
@@ -93,7 +107,11 @@ def _requires_prepared_png(image: PngImageFile, file: BinaryIO, bit_depth: int) 
 async def limit_render_request(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    if request.method == "POST" and request.url.path in {RENDER_PATH, STYLE_PATH}:
+    if request.method == "POST" and request.url.path in {
+        RENDER_PATH,
+        STYLE_PATH,
+        FLOOR_SUGGESTION_PATH,
+    }:
         length = request.headers.get("content-length", "")
         if not length.isascii() or not length.isdecimal() or len(length) > 12:
             return JSONResponse(
@@ -119,12 +137,45 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _local_browser_request(request: Request) -> bool:
+    loopback = {"localhost", "127.0.0.1", "::1"}
+    host = request.headers.get("host")
+    if (
+        request.url.hostname not in loopback
+        or request.client is None
+        or request.client.host not in loopback
+        or not host
+    ):
+        return False
+
+    origin = request.headers.get("origin")
+    if origin is not None:
+        return origin == f"{request.url.scheme}://{host}"
+    # A same-origin browser GET does not normally send Origin.
+    return (
+        request.method == "GET"
+        and request.headers.get("sec-fetch-site") == "same-origin"
+    )
+
+
 @app.get("/api/style-status")
-def style_status() -> JSONResponse:
+def style_status(request: Request) -> JSONResponse:
+    codex = codex_status() if _local_browser_request(request) else None
     return JSONResponse(
-        {"configured": style_provider_configured()},
+        {
+            "configured": style_provider_configured(),
+            **({"codex": codex} if codex else {}),
+        },
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _require_oak_prompt(prompt: str) -> None:
+    if not requests_oak(prompt):
+        raise HTTPException(
+            422,
+            'Quick floor currently supports light oak. Try "Change the floor to light oak."',
+        )
 
 
 @app.post(
@@ -135,7 +186,10 @@ def style_status() -> JSONResponse:
 def render_photo(
     photo: Annotated[UploadFile, File()],
     plan: Annotated[str, Form(max_length=MAX_PLAN_BYTES)],
+    prompt: Annotated[str | None, Form(max_length=2000)] = None,
 ) -> Response:
+    if prompt is not None:
+        _require_oak_prompt(prompt)
     if photo.size is not None and photo.size > MAX_WORKING_PNG_BYTES:
         raise HTTPException(413, "The working photo exceeds 100 MiB.")
 
@@ -193,6 +247,10 @@ def render_photo(
         raise HTTPException(413, "Choose a photo of 24 megapixels or less.") from error
     except OSError as error:
         raise HTTPException(422, "The photo could not be decoded.") from error
+    except FloorGeometryError as error:
+        raise HTTPException(
+            422, str(error), headers={"X-Same-Angle-Floor-Adjust": error.adjust}
+        ) from error
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
@@ -211,10 +269,49 @@ def render_photo(
     response_class=Response,
     responses={200: {"content": {"image/png": {}}}},
 )
-def render_style(
+def render_style_request(
+    request: Request,
     photo: Annotated[UploadFile, File()],
     plan: Annotated[str, Form(max_length=MAX_STYLE_PLAN_BYTES)],
     candidate: Annotated[UploadFile | None, File()] = None,
+    provider: Annotated[Literal["openai", "codex"], Form()] = "openai",
+) -> Response:
+    if provider == "codex":
+        if not _local_browser_request(request):
+            raise HTTPException(
+                403, "Open the Same Angle editor on localhost to use Codex."
+            )
+        if candidate is not None:
+            raise HTTPException(422, "Generate with Codex or import an edited photo.")
+    return render_style(photo, plan, candidate, provider=provider)
+
+
+@app.post(FLOOR_SUGGESTION_PATH)
+def floor_suggestion(
+    photo: Annotated[UploadFile, File()],
+    prompt: Annotated[str, Form(max_length=2000)],
+) -> JSONResponse:
+    _require_oak_prompt(prompt)
+    if photo.size is not None and photo.size > MAX_WORKING_PNG_BYTES:
+        raise HTTPException(413, "The working photo exceeds 100 MiB.")
+    try:
+        suggestion = suggest_floor(read_style_image(photo.file))
+    except (OSError, Image.DecompressionBombError) as error:
+        raise HTTPException(422, "Open a readable room photo.") from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return JSONResponse(
+        {"outline": suggestion.outline, "corners": suggestion.corners},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def render_style(
+    photo: UploadFile,
+    plan: str,
+    candidate: UploadFile | None = None,
+    *,
+    provider: Literal["openai", "codex"] = "openai",
 ) -> Response:
     uploads = (photo,) if candidate is None else (photo, candidate)
     if any(
@@ -240,7 +337,9 @@ def render_style(
             raise ValueError("The approved regions must match the oriented photo size.")
         allowed = style_mask(original.size, approved.editable, approved.protected)
 
-        if candidate is None:
+        if provider == "codex":
+            edited = edit_with_codex(original, allowed, approved.prompt)
+        elif candidate is None:
             result = edit_with_openai(original, allowed, approved.prompt)
             edited = read_style_image(BytesIO(result))
         else:
@@ -249,6 +348,12 @@ def render_style(
         composite = composite_style(
             original, edited, allowed, feather_edges=approved.feather_edges
         )
+        if provider == "codex" and not ImageChops.difference(
+            original.convert("RGBA"), composite
+        ).getbbox(alpha_only=False):
+            raise HTTPException(422, NO_EDIT_MESSAGE)
+    except CodexProviderError as error:
+        raise HTTPException(error.status_code, str(error)) from error
     except StyleProviderError as error:
         raise HTTPException(503, str(error)) from error
     except (Image.DecompressionBombError, OSError) as error:

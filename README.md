@@ -25,6 +25,21 @@ Choose **Restyle room** to describe a renovation in a prompt. Outline and add ed
 
 To redesign through a signed-in Codex CLI session, use **Download Codex plan** and **Download prepared photo** in **Restyle room**. Run [`$same-angle-redesign`](.agents/skills/same-angle-redesign/SKILL.md) with those files and a private output directory. The CLI checks that the photo matches the plan before generation and saves the styled PNG and comparison automatically.
 
+To generate from the browser using your ChatGPT plan, install Codex CLI and run `codex login` once. From the repository root, start the app with `ENABLE_CODEX_IMAGEGEN=1 bun run dev` and open the localhost URL printed by Vite. In **Restyle room**, enter the prompt, add an editable and a protected region, then choose **Generate with Codex**. The signed-in Codex CLI sends a prepared photo and guide to OpenAI and returns one image. Same Angle composites it locally and opens the before/after slider. The setting is off on a regular start. A generation has a three-minute deadline and occupies one local Codex slot. **Stop waiting** closes the browser request while that generation can still finish.
+
+Choose **Quick floor edit** and enter “Change the floor to light oak” or “Zmień podłogę na jasny dąb” to replace a floor using the local renderer. The automatic suggestion works best with a clearly separated floor and two visible, converging side edges. When the evidence is incomplete, the editor asks you to check the outline or align the grid. An existing outline and grid can be reused.
+
+For an optional local floor model, keep the [Fast-SCNN ONNX checkpoint and its `.onnx.data` file](https://github.com/Tanishjain-glitch/-Floor-Segmentation/tree/3bcf16b6427ea8b69fd4a326880a02a3844c7820/weights) together outside the repository. From the repository root, run:
+
+```sh
+uv sync --project backend --locked --extra floor-vision
+UV_NO_SYNC=1 SAME_ANGLE_FLOOR_MODEL_FILE=/absolute/path/to/fast_scnn_floor.onnx bun run dev
+```
+
+The optional dependencies were tested on Apple Silicon. The locked OpenCV wheel requires macOS 15 or later on Apple Silicon, and the locked ONNX Runtime package has no Intel macOS wheel. The model suggests the visible floor on the local CPU. The grid uses straight boundaries found in both the mask and the photo. The editor asks for a manual outline when the model cannot corroborate the suggestion with visible boundaries. It keeps a supported outline and opens grid alignment when the proposed grid fails the renderer's projection checks.
+
+Use **Check perspective** beside a comparison to mark the same edge on the source and result. Include the two endpoints and a middle point near the mask boundary. Mark edges in two directions to check both. The readout shows the largest marked-point shift in fit-to-window pixels and the largest change in angle. A shifted marked edge labels the result as a sketch and changes the download name.
+
 To load an existing private environment file for local generation, start the backend with `UV_ENV_FILE=/absolute/path/to/your.env bun run dev` from `backend/` and start `bun run dev` separately from `frontend/`. Set `OPENAI_API_KEY` in the private file and keep it outside Git. **Restyle room** shows whether the local backend has a key configured.
 
 Choose **Preview a bed** to arrange a shared bed on one or two photos. Fit each camera, then open **Floor plan** to enter room and bed dimensions, check wall clearance, and move or rotate the bed. The default room dimensions are illustrative. The views and PNG snapshots display **Skala orientacyjna**.

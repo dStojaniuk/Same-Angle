@@ -10,6 +10,13 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.optional-dependencies]
+floor-vision = [
+    "numpy==2.5.5",
+    "onnxruntime==1.32.0",
+    "opencv-python-headless==5.1.0.95",
+]
+
 [dependency-groups]
 dev = ["mypy", "pytest", "ruff"]
 

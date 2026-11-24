@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from "react";
 
 import { downloadBlob } from "./download";
 import type { Point } from "./outline";
+import { usePerspectiveReview } from "./PerspectiveReview";
 import type { RoomPhoto } from "./photo";
 import { PhotoViewport } from "./PhotoViewport";
 import {
   exportStylePlan,
   maxStylePrompt,
   maxStyleRegions,
+  readStyleStatus,
   renderStyle,
-  styleProviderConfigured,
+  type CodexStatus,
+  type StyleInput,
   type StyleRegion,
 } from "./styleRender";
 
@@ -21,6 +24,12 @@ const providerMessages: Record<ProviderStatus, string> = {
   configured: "Generation sends the photo, mask and prompt to OpenAI.",
   missing: "Browser generation requires OPENAI_API_KEY on the local backend.",
   unavailable: "The local renderer could not report its generation status.",
+};
+const codexMessages: Record<CodexStatus, string> = {
+  ready: "Uses your signed-in Codex session to send the photo and prompt to OpenAI.",
+  missing: "Install Codex CLI to use your ChatGPT plan.",
+  login_required: "Run codex login and choose ChatGPT.",
+  unavailable: "The local Codex CLI could not be reached.",
 };
 
 type StyleEditorProps = {
@@ -43,6 +52,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
   const [zoom, setZoom] = useState(1);
   const [panning, setPanning] = useState(false);
   const [provider, setProvider] = useState<ProviderStatus>("checking");
+  const [codex, setCodex] = useState<CodexStatus>();
   const [providerCheck, setProviderCheck] = useState(0);
   const [featherEdges, setFeatherEdges] = useState(true);
 
@@ -57,7 +67,8 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
     !rendering &&
     regions.some((region) => region.kind === "editable") &&
     regions.some((region) => region.kind === "protected");
-  const comparison = comparisonUrl ? { url: comparisonUrl, split } : null;
+  const review = usePerspectiveReview(comparisonUrl, split, () => setPanning(false));
+  const comparison = comparisonUrl ? { url: comparisonUrl, split: review.split } : null;
   const editCount = regions.filter((region) => region.kind === "editable").length;
   const protectedCount = regions.length - editCount;
   const regionCount = kind === "editable" ? editCount : protectedCount;
@@ -74,12 +85,16 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
     if (!active) return;
 
     const controller = new AbortController();
-    void styleProviderConfigured(controller.signal)
-      .then((configured) => {
-        if (!controller.signal.aborted) setProvider(configured ? "configured" : "missing");
+    void readStyleStatus(controller.signal)
+      .then(({ configured, codex }) => {
+        if (controller.signal.aborted) return;
+        setProvider(configured ? "configured" : "missing");
+        setCodex(codex);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setProvider("unavailable");
+        if (controller.signal.aborted) return;
+        setProvider("unavailable");
+        setCodex(undefined);
       });
 
     return () => controller.abort();
@@ -129,8 +144,12 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
     }
   }
 
-  async function arrange(imported: File | null) {
-    if (!canRender || request.current || (!imported && provider !== "configured")) return;
+  async function arrange(input: StyleInput) {
+    if (!canRender || request.current) return;
+    if (input.kind === "generate") {
+      const ready = input.provider === "codex" ? codex === "ready" : provider === "configured";
+      if (!ready) return;
+    }
 
     const controller = new AbortController();
     request.current = controller;
@@ -139,14 +158,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
     let url: string | null = null;
 
     try {
-      const png = await renderStyle(
-        photo,
-        prompt,
-        regions,
-        imported,
-        controller.signal,
-        featherEdges,
-      );
+      const png = await renderStyle(photo, prompt, regions, input, controller.signal, featherEdges);
       if (controller.signal.aborted) return;
 
       url = URL.createObjectURL(png);
@@ -197,7 +209,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
               <button
                 type="button"
                 className="text-button"
-                disabled={zoom === 1}
+                disabled={zoom === 1 || review.marking}
                 aria-pressed={panning}
                 onClick={() => setPanning(!panning)}
               >
@@ -227,6 +239,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
             zoom={zoom}
             comparison={comparison}
             styleRegions={regions}
+            annotations={review.annotations}
           />
           {comparison && (
             <div className="comparison-control">
@@ -235,10 +248,11 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
                 type="range"
                 ref={slider}
                 aria-label="Before and after"
-                aria-valuetext={`${split}% original, ${100 - split}% styled`}
+                aria-valuetext={`${review.split}% original, ${100 - review.split}% styled`}
                 min={0}
                 max={100}
-                value={split}
+                value={review.split}
+                disabled={review.marking}
                 onChange={(event) => setSplit(event.currentTarget.valueAsNumber)}
               />
               <span>All original</span>
@@ -251,12 +265,13 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
             <>
               <h2>Compare the style edit</h2>
               <p>Protected regions and pixels outside the edit mask use the original photo.</p>
+              {review.controls}
               <a
                 className="primary-button download-button"
                 href={comparison.url}
-                download={`${basename}-style.png`}
+                download={`${basename}-${review.sketch ? "sketch" : "style"}.png`}
               >
-                Download styled PNG
+                {review.sketch ? "Download sketch PNG" : "Download styled PNG"}
               </a>
               <button type="button" className="secondary-button" onClick={clearComparison}>
                 Back to masks
@@ -338,12 +353,28 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
                 className="primary-button"
                 disabled={!canRender || provider !== "configured"}
                 aria-describedby="generation-status"
-                onClick={() => void arrange(null)}
+                onClick={() => void arrange({ kind: "generate", provider: "openai" })}
               >
                 Generate with OpenAI
               </button>
               <output id="generation-status">{providerMessages[provider]}</output>
-              {(provider === "missing" || provider === "unavailable") && (
+              {codex && (
+                <>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!canRender || codex !== "ready" || provider === "checking"}
+                    aria-describedby="codex-status"
+                    onClick={() => void arrange({ kind: "generate", provider: "codex" })}
+                  >
+                    Generate with Codex
+                  </button>
+                  <output id="codex-status">{codexMessages[codex]}</output>
+                </>
+              )}
+              {(provider === "missing" ||
+                provider === "unavailable" ||
+                (codex && codex !== "ready")) && (
                 <button
                   type="button"
                   className="text-button"
@@ -390,7 +421,7 @@ export function StyleEditor({ active, photo, onBack }: StyleEditorProps) {
                 type="button"
                 className="secondary-button"
                 disabled={!canRender || !candidate}
-                onClick={() => void arrange(candidate)}
+                onClick={() => candidate && void arrange({ kind: "import", file: candidate })}
               >
                 Apply masks to imported image
               </button>

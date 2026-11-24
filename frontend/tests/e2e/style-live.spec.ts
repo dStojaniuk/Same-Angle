@@ -30,6 +30,37 @@ async function addStyleMasks(page: Page) {
   ]);
 }
 
+test("generates through the local Codex choice and keeps the draft after an error", async ({
+  page,
+}) => {
+  await page.route("**/api/style-status", (route) =>
+    route.fulfill({ json: { configured: false, codex: "ready" } }),
+  );
+  const image = await readFile("tests/fixtures/rotated-room.jpg");
+  let requests = 0;
+  await page.route("**/api/style-render", async (route) => {
+    expect(route.request().postData()).toContain('name="provider"\r\n\r\ncodex');
+    expect(route.request().postData()).not.toContain('name="candidate"');
+    requests += 1;
+    await route.fulfill({ status: 504, json: { detail: "Codex generation timed out." } });
+  });
+  await page.goto("/");
+  await page.getByLabel("Room photo").setInputFiles({
+    name: "test-room.jpg",
+    mimeType: "image/jpeg",
+    buffer: image,
+  });
+  await page.getByRole("button", { name: "Restyle room" }).click();
+  await page.getByLabel("Style prompt").fill("Replace the wallpaper.");
+  await addStyleMasks(page);
+  const generate = page.getByRole("button", { name: "Generate with Codex" });
+  await generate.click();
+  await expect(page.getByRole("alert")).toContainText("Codex generation timed out.");
+  await expect(page.getByLabel("Style prompt")).toHaveValue("Replace the wallpaper.");
+  await expect(generate).toBeEnabled();
+  expect(requests).toBe(1);
+});
+
 test("starts generation from a prompt without an imported candidate", async ({ page }) => {
   await page.route("**/api/style-status", (route) => route.fulfill({ json: { configured: true } }));
   await page.addInitScript(() => {

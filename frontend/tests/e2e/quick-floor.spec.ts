@@ -43,6 +43,26 @@ async function addPhotoPoints(
   }
 }
 
+async function downloadFloorPixels(page: Page, points: [number, number][]) {
+  const downloadEvent = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download PNG" }).click();
+  const png = await readFile(await (await downloadEvent).path());
+  return page.evaluate(
+    async ({ data, points }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      return points.map(([x, y]) => Array.from(context.getImageData(x, y, 1, 1).data));
+    },
+    { data: png.toString("base64"), points },
+  );
+}
+
 async function applyOak(page: Page) {
   await page.getByRole("button", { name: "Quick floor edit" }).click();
   await page.getByLabel("Floor prompt").fill("Zmień podłogę na jasny dąb.");
@@ -101,24 +121,11 @@ test("includes only approved depth suggestions and manual protection in the PNG"
   await page.getByRole("button", { name: "Add protected area" }).click();
   await page.getByRole("button", { name: "Use mask" }).click();
   await page.getByRole("button", { name: "Apply floor edit" }).click();
-  const downloadEvent = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Download PNG" }).click();
-  const png = await readFile(await (await downloadEvent).path());
-  const colors = await page.evaluate(async (data) => {
-    const image = new Image();
-    image.src = `data:image/png;base64,${data}`;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const context = canvas.getContext("2d")!;
-    context.drawImage(image, 0, 0);
-    return [
-      [88, 104],
-      [125, 111],
-      [100, 124],
-    ].map(([x, y]) => Array.from(context.getImageData(x, y, 1, 1).data));
-  }, png.toString("base64"));
+  const colors = await downloadFloorPixels(page, [
+    [88, 104],
+    [125, 111],
+    [100, 124],
+  ]);
   const floor = [121, 51, 69, 255];
   expect(colors[0]).toEqual(floor);
   expect(colors[1]).toEqual(floor);
@@ -155,17 +162,17 @@ for (const mode of ["Quick Floor", "the grid"] as const) {
     const review = page.getByRole("button", { name: "Review floor mask" });
     await review.click();
     await addPhotoPoints(page, "Add mask point", [
+      [85, 100],
+      [106, 115],
+      [106, 100],
+      [85, 116],
+    ]);
+    await page.getByRole("button", { name: "Add protected area" }).click();
+    await addPhotoPoints(page, "Add mask point", [
       [121, 106],
       [130, 106],
       [130, 116],
       [121, 116],
-    ]);
-    await page.getByRole("button", { name: "Add protected area" }).click();
-    await addPhotoPoints(page, "Add mask point", [
-      [85, 100],
-      [106, 115],
-      [106, 100],
-      [85, 115],
     ]);
     await page.getByRole("button", { name: "Add protected area" }).click();
     await page.getByRole("button", { name: "Use mask" }).click();
@@ -174,14 +181,22 @@ for (const mode of ["Quick Floor", "the grid"] as const) {
     await expect(render).toBeEnabled();
     await render.click();
     await expect(page.getByRole("heading", { name: "Review floor mask" })).toBeVisible();
-    await expect(page.getByRole("alert")).toContainText("Protected area 2");
+    await expect(page.getByRole("alert")).toContainText("Protected area 1");
     await expect(page.getByText("2 marked areas")).toBeVisible();
 
-    await page.getByRole("button", { name: "Remove last area" }).click();
-    await expect(page.getByText("1 marked areas")).toBeVisible();
+    await page.getByRole("button", { name: "Remove protected area 1" }).click();
+    await expect(page.getByText("1 marked area")).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
     await page.getByRole("button", { name: "Use mask" }).click();
     await render.click();
-    await expect(download).toBeVisible();
+
+    const [protectedPixel, renderedPixel] = await downloadFloorPixels(page, [
+      [125, 111],
+      [100, 124],
+    ]);
+    const sourcePixel = [121, 51, 69, 255];
+    expect(protectedPixel).toEqual(sourcePixel);
+    expect(renderedPixel).not.toEqual(sourcePixel);
 
     await review.click();
     await page.getByRole("button", { name: "Cancel mask review" }).click();

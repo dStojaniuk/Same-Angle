@@ -44,7 +44,7 @@ def test_floor_export_keeps_user_and_depth_protection() -> None:
 @pytest.mark.parametrize(
     ("region", "message"),
     [
-        ([[22, 38], [42, 48], [42, 38], [22, 48]], "Protected area 1"),
+        ([[22, 38], [42, 48], [42, 38], [22, 50]], "Protected area 1"),
         ([[22, 38], [32, 38], [42, 38]], "Protected area 1"),
         ([[4, 32], [60, 32], [60, 60], [4, 60]], "Leave some floor pixels"),
     ],

@@ -25,6 +25,7 @@ export function FloorMaskReview({ photo, outline, protection, error, onSave, onB
   const [useHint, setUseHint] = useState(Boolean(protection?.depthMask));
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
+  const [validationError, setValidationError] = useState(error);
   const [zoom, setZoom] = useState(1);
   const [panning, setPanning] = useState(false);
   const request = useRef<AbortController | null>(null);
@@ -111,9 +112,9 @@ export function FloorMaskReview({ photo, outline, protection, error, onSave, onB
         <h2 tabIndex={-1} ref={heading}>
           Review floor mask
         </h2>
-        {error && (
+        {validationError && (
           <p className="field-error" role="alert">
-            {error}
+            {validationError}
           </p>
         )}
         <p id="style-mask-help">
@@ -135,7 +136,10 @@ export function FloorMaskReview({ photo, outline, protection, error, onSave, onB
               <input
                 type="checkbox"
                 checked={useHint}
-                onChange={(event) => setUseHint(event.currentTarget.checked)}
+                onChange={(event) => {
+                  setUseHint(event.currentTarget.checked);
+                  setValidationError(undefined);
+                }}
               />
               Protect the suggested areas
             </label>
@@ -149,6 +153,7 @@ export function FloorMaskReview({ photo, outline, protection, error, onSave, onB
             onClick={() => {
               setRegions([...regions, draft]);
               setDraft([]);
+              setValidationError(undefined);
             }}
           >
             Add protected area
@@ -161,16 +166,27 @@ export function FloorMaskReview({ photo, outline, protection, error, onSave, onB
           >
             Clear points
           </button>
-          <button
-            type="button"
-            className="text-button"
-            disabled={!regions.length}
-            onClick={() => setRegions(regions.slice(0, -1))}
-          >
-            Remove last area
-          </button>
         </div>
-        {regions.length > 0 && <output>{regions.length} marked areas</output>}
+        {regions.length > 0 && (
+          <div className="editor-actions">
+            <output>
+              {regions.length} {regions.length === 1 ? "marked area" : "marked areas"}
+            </output>
+            {regions.map((_, index) => (
+              <button
+                key={index}
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setRegions(regions.filter((_, regionIndex) => index !== regionIndex));
+                  setValidationError(undefined);
+                }}
+              >
+                Remove protected area {index + 1}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="editor-actions">
           <button
             type="button"

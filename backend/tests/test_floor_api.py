@@ -41,6 +41,30 @@ def test_floor_export_keeps_user_and_depth_protection() -> None:
         assert result.getpixel((34, 50)) != source_color
 
 
+@pytest.mark.parametrize(
+    ("region", "message"),
+    [
+        ([[22, 38], [42, 48], [42, 38], [22, 48]], "Protected area 1"),
+        ([[22, 38], [32, 38], [42, 38]], "Protected area 1"),
+        ([[4, 32], [60, 32], [60, 60], [4, 60]], "Leave some floor pixels"),
+    ],
+)
+def test_floor_export_reports_protection_errors_separately(
+    region: list[list[int]], message: str
+) -> None:
+    original = BytesIO()
+    Image.new("RGB", (64, 64)).save(original, "PNG")
+    original.seek(0)
+    plan = loads(PLAN)
+    plan["protected"] = [region]
+
+    with pytest.raises(HTTPException, match=message) as error:
+        api.render_photo(UploadFile(original), dumps(plan))
+
+    assert error.value.status_code == 422
+    assert error.value.headers == {"X-Same-Angle-Floor-Adjust": "protection"}
+
+
 def test_floor_export_rejects_protection_for_a_different_photo_size() -> None:
     original, protected = BytesIO(), BytesIO()
     Image.new("RGB", (64, 64)).save(original, "PNG")

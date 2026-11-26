@@ -13,11 +13,12 @@ type Props = {
   photo: RoomPhoto;
   outline: Point[];
   protection?: FloorProtection;
+  error?: string;
   onSave: (protection: FloorProtection) => void;
   onBack: () => void;
 };
 
-export function FloorMaskReview({ photo, outline, protection, onSave, onBack }: Props) {
+export function FloorMaskReview({ photo, outline, protection, error, onSave, onBack }: Props) {
   const [regions, setRegions] = useState<Point[][]>(protection?.regions ?? []);
   const [draft, setDraft] = useState<Point[]>([]);
   const [hint, setHint] = useState<Blob | null>(protection?.depthMask ?? null);
@@ -110,6 +111,11 @@ export function FloorMaskReview({ photo, outline, protection, onSave, onBack }: 
         <h2 tabIndex={-1} ref={heading}>
           Review floor mask
         </h2>
+        {error && (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        )}
         <p id="style-mask-help">
           Mark a protected area around a threshold, trim or furniture. Orange shows areas that depth
           suggests protecting.
@@ -175,7 +181,7 @@ export function FloorMaskReview({ photo, outline, protection, onSave, onBack }: 
             Use mask
           </button>
           <button type="button" className="secondary-button" onClick={onBack}>
-            Back to Quick Floor
+            Cancel mask review
           </button>
         </div>
       </section>

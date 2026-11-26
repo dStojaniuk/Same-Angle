@@ -21,15 +21,24 @@ import { useBedViews } from "./useBedViews";
 
 const zoomLevels = [1, 1.25, 1.5, 2];
 
+type FloorRenderMode = { kind: "quick" | "grid" };
+type FloorResultMode = {
+  kind: "comparison";
+  url: string;
+  source: "render";
+  renderMode: FloorRenderMode;
+};
+type FloorMaskDestination = FloorRenderMode | FloorResultMode;
+
 type EditorMode =
   | { kind: "outline" }
-  | { kind: "grid" }
   | { kind: "bed" }
   | { kind: "calibration" }
   | { kind: "style" }
-  | { kind: "quick" }
-  | { kind: "floor-mask-review" }
-  | { kind: "comparison"; url: string; source: "sample" | "render" };
+  | FloorRenderMode
+  | FloorResultMode
+  | { kind: "floor-mask-review"; from: FloorMaskDestination; error?: string }
+  | { kind: "comparison"; url: string; source: "sample" };
 type FocusTarget =
   | "grid"
   | "grid-heading"
@@ -191,10 +200,20 @@ export function RoomEditor({
     setRenderError("");
   }
 
-  function changeMode(next: EditorMode, focus: FocusTarget) {
+  function changeMode(next: EditorMode, focus: FocusTarget | null) {
     focusTarget.current = focus;
     setPhotoTool("points");
     setMode(next);
+  }
+
+  function returnFromFloorMask(destination: FloorMaskDestination) {
+    const focus =
+      destination.kind === "comparison"
+        ? "slider"
+        : destination.kind === "quick"
+          ? "quick"
+          : "render";
+    changeMode(destination, focus);
   }
 
   function focusAfterSwitch(target: FocusTarget) {
@@ -264,7 +283,9 @@ export function RoomEditor({
   }
 
   async function submitFloor() {
-    const quick = mode.kind === "quick";
+    if (mode.kind !== "quick" && mode.kind !== "grid") return;
+    const renderMode = mode;
+    const quick = renderMode.kind === "quick";
     if ((!quick && !validGrid) || movingGeometry || request.current) return;
 
     const usesSampleGeometry = photo === sampleRoom && outline === photo.outline;
@@ -334,14 +355,21 @@ export function RoomEditor({
       resultUrl.current = incomingUrl;
       if (quick && geometry.outline !== outline) dispatch({ type: "edit", draft: geometry });
       setSplit(50);
-      changeMode({ kind: "comparison", url: incomingUrl, source: "render" }, "slider");
+      changeMode({ kind: "comparison", url: incomingUrl, source: "render", renderMode }, "slider");
       incomingUrl = null;
     } catch (error) {
       if (request.current === controller) {
-        setRenderError(error instanceof Error ? error.message : "The local render failed.");
-        if (quick && error instanceof FloorGeometryError) {
+        const message = error instanceof Error ? error.message : "The local render failed.";
+        const adjust = error instanceof FloorGeometryError ? error.adjust : null;
+        if (adjust === "protection") {
+          changeMode({ kind: "floor-mask-review", from: renderMode, error: message }, null);
+          return;
+        }
+
+        setRenderError(message);
+        if (quick && adjust) {
           if (geometry.outline !== outline) dispatch({ type: "edit", draft: geometry });
-          changeMode({ kind: error.adjust }, error.adjust === "grid" ? "grid-heading" : "grid");
+          changeMode({ kind: adjust }, adjust === "grid" ? "grid-heading" : "grid");
         } else {
           focusTarget.current = "render";
         }
@@ -408,11 +436,12 @@ export function RoomEditor({
           photo={photo}
           outline={outline}
           protection={protection}
+          error={mode.error}
           onSave={(approved) => {
             setReviewedMask({ outline, protection: approved });
-            changeMode({ kind: "quick" }, "quick");
+            returnFromFloorMask(mode.from.kind === "comparison" ? mode.from.renderMode : mode.from);
           }}
-          onBack={() => changeMode({ kind: "quick" }, "quick")}
+          onBack={() => returnFromFloorMask(mode.from)}
         />
       )}
       <div className="studio-heading" hidden={!showStudio}>
@@ -584,7 +613,7 @@ export function RoomEditor({
                   <button
                     type="button"
                     className="secondary-button"
-                    onClick={() => changeMode({ kind: "floor-mask-review" }, "quick")}
+                    onClick={() => changeMode({ kind: "floor-mask-review", from: mode }, null)}
                   >
                     Review floor mask
                   </button>
@@ -692,7 +721,7 @@ export function RoomEditor({
                     type="button"
                     className="secondary-button"
                     disabled={rendering}
-                    onClick={() => changeMode({ kind: "floor-mask-review" }, "quick")}
+                    onClick={() => changeMode({ kind: "floor-mask-review", from: mode }, null)}
                   >
                     Review floor mask
                   </button>

@@ -6,7 +6,7 @@ import { assertRenderResponse, readRenderedPng } from "./renderedPhoto";
 
 export class FloorGeometryError extends Error {
   constructor(
-    public readonly adjust: "outline" | "grid",
+    public readonly adjust: "outline" | "grid" | "protection",
     message: string,
   ) {
     super(message);
@@ -89,7 +89,7 @@ export async function renderFloor(
     const adjust = response.headers.get("X-Same-Angle-Floor-Adjust");
     if (
       response.status === 422 &&
-      (adjust === "outline" || adjust === "grid") &&
+      (adjust === "outline" || adjust === "grid" || adjust === "protection") &&
       error instanceof Error
     ) {
       throw new FloorGeometryError(adjust, error.message);

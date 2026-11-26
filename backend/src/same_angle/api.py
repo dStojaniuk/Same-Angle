@@ -210,12 +210,23 @@ def _floor_protection(
                 or not isinstance(source, PngImageFile)
                 or source.is_animated
             ):
-                raise ValueError("Send a static protection mask matching the photo.")
+                raise FloorGeometryError(
+                    "protection", "Send a static protection mask matching the photo."
+                )
             protected = source.getchannel("A").point(lambda value: 255 if value else 0)
-    for region in regions:
+    for number, region in enumerate(regions, start=1):
         if any(x > size[0] or y > size[1] for x, y in region):
-            raise ValueError("Keep protected areas inside the photo.")
-        validate_polygon(region)
+            raise FloorGeometryError(
+                "protection", f"Keep protected area {number} inside the photo."
+            )
+        try:
+            validate_polygon(region)
+        except FloorGeometryError as error:
+            raise FloorGeometryError(
+                "protection",
+                f"Protected area {number} needs a visible area, distinct points, "
+                "and edges that do not cross.",
+            ) from error
         protected = ImageChops.lighter(protected, rasterize_polygon(size, region))
     return protected
 

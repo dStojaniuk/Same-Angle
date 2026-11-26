@@ -11,7 +11,9 @@ type Matrix = tuple[float, float, float, float, float, float, float, float, floa
 
 
 class FloorGeometryError(ValueError):
-    def __init__(self, adjust: Literal["outline", "grid"], message: str) -> None:
+    def __init__(
+        self, adjust: Literal["outline", "grid", "protection"], message: str
+    ) -> None:
         super().__init__(message)
         self.adjust = adjust
 
@@ -263,10 +265,14 @@ def _render_mapped_floor(
 ) -> Image.Image:
     validate_polygon(outline)
     mask = rasterize_polygon(original.size, outline)
-    if protection is not None:
-        mask = ImageChops.subtract(mask, protection)
     if mask.getbbox() is None:
         raise FloorGeometryError("outline", "Draw an outline that covers floor pixels.")
+    if protection is not None:
+        mask = ImageChops.subtract(mask, protection)
+        if mask.getbbox() is None:
+            raise FloorGeometryError(
+                "protection", "Leave some floor pixels unprotected."
+            )
 
     projected = _project_texture(original.size, outline, inverse, texture)
     source = original.convert("RGBA")

@@ -30,6 +30,19 @@ async function uploadRoom(page: Page, floor: "trapezoid" | "rectangle" | "none")
   });
 }
 
+async function addPhotoPoints(
+  page: Page,
+  label: string,
+  points: readonly (readonly [number, number])[],
+) {
+  const photo = page.getByRole("button", { name: label });
+  const frame = await photo.boundingBox();
+  if (!frame) throw new Error("Expected an editable photo");
+  for (const [x, y] of points) {
+    await photo.click({ position: { x: (x * frame.width) / 192, y: (y * frame.height) / 144 } });
+  }
+}
+
 async function applyOak(page: Page) {
   await page.getByRole("button", { name: "Quick floor edit" }).click();
   await page.getByLabel("Floor prompt").fill("Zmień podłogę na jasny dąb.");
@@ -79,16 +92,12 @@ test("includes only approved depth suggestions and manual protection in the PNG"
   await expect(hint).not.toBeChecked();
   await hint.check();
 
-  const photo = page.getByRole("button", { name: "Add mask point" });
-  const frame = (await photo.boundingBox())!;
-  for (const [x, y] of [
+  await addPhotoPoints(page, "Add mask point", [
     [121, 106],
     [130, 106],
     [130, 116],
     [121, 116],
-  ]) {
-    await photo.click({ position: { x: (x * frame.width) / 192, y: (y * frame.height) / 144 } });
-  }
+  ]);
   await page.getByRole("button", { name: "Add protected area" }).click();
   await page.getByRole("button", { name: "Use mask" }).click();
   await page.getByRole("button", { name: "Apply floor edit" }).click();
@@ -115,6 +124,70 @@ test("includes only approved depth suggestions and manual protection in the PNG"
   expect(colors[1]).toEqual(floor);
   expect(colors[2]).not.toEqual(floor);
 });
+
+for (const mode of ["Quick Floor", "the grid"] as const) {
+  test(`recovers from invalid protection in ${mode} without editing the outline`, async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await uploadRoom(page, "trapezoid");
+    await expect(page.getByRole("img", { name: "test-room.png" })).toBeVisible();
+    const outline = [
+      [62, 85],
+      [132, 85],
+      [185, 143],
+      [12, 143],
+    ] as const;
+    const renderLabel = mode === "Quick Floor" ? "Apply floor edit" : "Render floor";
+    if (mode === "Quick Floor") {
+      await page.route("**/api/floor-suggestion", (route) =>
+        route.fulfill({ json: { outline, corners: outline } }),
+      );
+      await applyOak(page);
+    } else {
+      await addPhotoPoints(page, "Add floor point", outline);
+      await page.getByRole("button", { name: "Adjust perspective grid" }).click();
+      await page.getByRole("button", { name: renderLabel }).click();
+    }
+    const download = page.getByRole("link", { name: "Download PNG" });
+    await expect(download).toBeVisible();
+
+    const review = page.getByRole("button", { name: "Review floor mask" });
+    await review.click();
+    await addPhotoPoints(page, "Add mask point", [
+      [121, 106],
+      [130, 106],
+      [130, 116],
+      [121, 116],
+    ]);
+    await page.getByRole("button", { name: "Add protected area" }).click();
+    await addPhotoPoints(page, "Add mask point", [
+      [85, 100],
+      [106, 115],
+      [106, 100],
+      [85, 115],
+    ]);
+    await page.getByRole("button", { name: "Add protected area" }).click();
+    await page.getByRole("button", { name: "Use mask" }).click();
+
+    const render = page.getByRole("button", { name: renderLabel });
+    await expect(render).toBeEnabled();
+    await render.click();
+    await expect(page.getByRole("heading", { name: "Review floor mask" })).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText("Protected area 2");
+    await expect(page.getByText("2 marked areas")).toBeVisible();
+
+    await page.getByRole("button", { name: "Remove last area" }).click();
+    await expect(page.getByText("1 marked areas")).toBeVisible();
+    await page.getByRole("button", { name: "Use mask" }).click();
+    await render.click();
+    await expect(download).toBeVisible();
+
+    await review.click();
+    await page.getByRole("button", { name: "Cancel mask review" }).click();
+    await expect(download).toBeVisible();
+  });
+}
 
 test("renders a clear floor from the photo and prompt and can mark the result as a sketch", async ({
   page,

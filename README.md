@@ -38,6 +38,18 @@ UV_NO_SYNC=1 SAME_ANGLE_FLOOR_MODEL_FILE=/absolute/path/to/fast_scnn_floor.onnx 
 
 The optional dependencies were tested on Apple Silicon. The locked OpenCV wheel requires macOS 15 or later on Apple Silicon, and the locked ONNX Runtime package has no Intel macOS wheel. The model suggests the visible floor on the local CPU. The grid uses straight boundaries found in both the mask and the photo. The editor asks for a manual outline when the model cannot corroborate the suggestion with visible boundaries. It keeps a supported outline and opens grid alignment when the proposed grid fails the renderer's projection checks.
 
+After outlining a floor, choose **Quick floor edit** and **Review floor mask** to mark protected areas around thresholds, trim, and furniture. The review applies to the current photo and outline for this session. Keep the floor grid aligned and use the same review when rendering from the grid editor.
+
+Optional depth suggestions use [MoGe-2 ViT-L Normal](https://huggingface.co/Ruicheng/moge-2-vitl-normal) with the [MoGe 2.0 inference code](https://github.com/microsoft/MoGe/tree/925b8ed835a7a9cdb7578ba15c658a0afc969030). Keep the checkpoint outside Git and install the model in a separate Python environment with the backend dependencies. From the repository root, start the backend with that environment:
+
+```sh
+PYTHONPATH="$PWD/backend/src:$MOGE_SOURCE" HF_HUB_OFFLINE=1 \
+  SAME_ANGLE_DEPTH_MODEL_FILE=/absolute/path/to/model.pt \
+  /absolute/path/to/model-env/bin/python -m uvicorn same_angle.api:app --host 127.0.0.1 --port 8765
+```
+
+In another terminal, run `bun run --filter @same-angle/frontend dev`. **Suggest protection with depth** marks off-plane pixels in orange. Use **Protect the suggested areas** to keep those pixels from the source image, or mark protected areas by hand. Check room boundaries and gaps in the floor mask in the review. The suggestions only affect pixels inside the outline.
+
 Use **Check perspective** beside a comparison to mark the same edge on the source and result. Include the two endpoints and a middle point near the mask boundary. Mark edges in two directions to check both. The readout shows the largest marked-point shift in fit-to-window pixels and the largest change in angle. A shifted marked edge labels the result as a sketch and changes the download name.
 
 To load an existing private environment file for local generation, start the backend with `UV_ENV_FILE=/absolute/path/to/your.env bun run dev` from `backend/` and start `bun run dev` separately from `frontend/`. Set `OPENAI_API_KEY` in the private file and keep it outside Git. **Restyle room** shows whether the local backend has a key configured.

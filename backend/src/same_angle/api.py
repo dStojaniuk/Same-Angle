@@ -19,9 +19,12 @@ from same_angle.floor import (
     FloorGeometryError,
     Matrix,
     oak_texture,
+    rasterize_polygon,
     render_calibrated_floor,
     render_floor,
+    validate_polygon,
 )
+from same_angle.floor_depth import depth_hint
 from same_angle.quick_floor import requests_oak, suggest_floor
 from same_angle.style import composite_style, style_mask
 from same_angle.style_provider import (
@@ -39,6 +42,8 @@ MAX_PLAN_BYTES = 8192
 MAX_OUTLINE_POINTS = 128
 RENDER_PATH = "/api/floor-render"
 FLOOR_SUGGESTION_PATH = "/api/floor-suggestion"
+FLOOR_DEPTH_PATH = "/api/floor-depth-hint"
+MAX_FLOOR_PROTECTION_BYTES = 12 * 1024 * 1024
 STYLE_PATH = "/api/style-render"
 MAX_STYLE_PLAN_BYTES = 32 * 1024
 
@@ -53,6 +58,14 @@ class FloorPlan(BaseModel):
     outline: Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
     corners: Annotated[list[Point], Field(min_length=4, max_length=4)] | None = None
     projection: Matrix | None = None
+    protected: Annotated[
+        list[Annotated[list[Point], Field(min_length=3, max_length=16)]],
+        Field(max_length=8),
+    ] = Field(default_factory=list)
+
+
+class FloorOutline(BaseModel):
+    outline: Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
 
 
 type Region = Annotated[list[Point], Field(min_length=3, max_length=MAX_OUTLINE_POINTS)]
@@ -111,6 +124,7 @@ async def limit_render_request(
         RENDER_PATH,
         STYLE_PATH,
         FLOOR_SUGGESTION_PATH,
+        FLOOR_DEPTH_PATH,
     }:
         length = request.headers.get("content-length", "")
         if not length.isascii() or not length.isdecimal() or len(length) > 12:
@@ -122,6 +136,8 @@ async def limit_render_request(
             if request.url.path == STYLE_PATH
             else MAX_WORKING_PNG_BYTES + 2 * MAX_PLAN_BYTES
         )
+        if request.url.path == RENDER_PATH:
+            limit += MAX_FLOOR_PROTECTION_BYTES
         if int(length) > limit:
             message = (
                 "The style render request is too large."
@@ -178,6 +194,43 @@ def _require_oak_prompt(prompt: str) -> None:
         )
 
 
+def _floor_protection(
+    size: tuple[int, int], regions: list[list[Point]], uploaded: UploadFile | None
+) -> Image.Image | None:
+    if not regions and uploaded is None:
+        return None
+    protected = Image.new("L", size)
+    if uploaded is not None:
+        if uploaded.size is not None and uploaded.size > MAX_FLOOR_PROTECTION_BYTES:
+            raise HTTPException(413, "The protection mask exceeds 12 MiB.")
+        with Image.open(uploaded.file, formats=["PNG"]) as source:
+            if (
+                source.size != size
+                or source.mode != "RGBA"
+                or not isinstance(source, PngImageFile)
+                or source.is_animated
+            ):
+                raise FloorGeometryError(
+                    "protection", "Send a static protection mask matching the photo."
+                )
+            protected = source.getchannel("A").point(lambda value: 255 if value else 0)
+    for number, region in enumerate(regions, start=1):
+        if any(x > size[0] or y > size[1] for x, y in region):
+            raise FloorGeometryError(
+                "protection", f"Keep protected area {number} inside the photo."
+            )
+        try:
+            validate_polygon(region)
+        except FloorGeometryError as error:
+            raise FloorGeometryError(
+                "protection",
+                f"Protected area {number} needs a visible area, distinct points, "
+                "and edges that do not cross.",
+            ) from error
+        protected = ImageChops.lighter(protected, rasterize_polygon(size, region))
+    return protected
+
+
 @app.post(
     RENDER_PATH,
     response_class=Response,
@@ -187,6 +240,7 @@ def render_photo(
     photo: Annotated[UploadFile, File()],
     plan: Annotated[str, Form(max_length=MAX_PLAN_BYTES)],
     prompt: Annotated[str | None, Form(max_length=2000)] = None,
+    protection: Annotated[UploadFile | None, File()] = None,
 ) -> Response:
     if prompt is not None:
         _require_oak_prompt(prompt)
@@ -230,13 +284,19 @@ def render_photo(
                 )
 
             if approved.projection is not None:
+                if protection is not None or approved.protected:
+                    raise ValueError("Use a floor grid to render with protected areas.")
                 result = render_calibrated_floor(
                     original, approved.outline, approved.projection, oak_texture()
                 )
             else:
                 assert approved.corners is not None
                 result = render_floor(
-                    original, approved.outline, approved.corners, oak_texture()
+                    original,
+                    approved.outline,
+                    approved.corners,
+                    oak_texture(),
+                    _floor_protection(original.size, approved.protected, protection),
                 )
             profile = (
                 original.info.get("icc_profile")
@@ -304,6 +364,40 @@ def floor_suggestion(
         {"outline": suggestion.outline, "corners": suggestion.corners},
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.post(FLOOR_DEPTH_PATH)
+def floor_depth(
+    request: Request,
+    photo: Annotated[UploadFile, File()],
+    plan: Annotated[str, Form(max_length=MAX_PLAN_BYTES)],
+) -> Response:
+    if not _local_browser_request(request):
+        raise HTTPException(403, "Open the Same Angle editor on localhost.")
+    if photo.size is not None and photo.size > MAX_WORKING_PNG_BYTES:
+        raise HTTPException(413, "The working photo exceeds 100 MiB.")
+    try:
+        outline = FloorOutline.model_validate_json(plan).outline
+        hint = depth_hint(read_style_image(photo.file), outline)
+    except FileNotFoundError as error:
+        raise HTTPException(503, str(error)) from error
+    except (ImportError, RuntimeError) as error:
+        raise HTTPException(
+            503, "MoGe-2 is unavailable on the local renderer."
+        ) from error
+    except (OSError, ValueError, Image.DecompressionBombError) as error:
+        raise HTTPException(
+            422, "Send a readable photo and a valid floor outline."
+        ) from error
+    if hint is None:
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    with BytesIO() as output:
+        hint.save(output, format="PNG")
+        return Response(
+            output.getvalue(),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
 
 
 def render_style(

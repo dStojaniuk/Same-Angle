@@ -7,6 +7,7 @@
       "passThroughEnv": [
         "CODEX_HOME",
         "ENABLE_CODEX_IMAGEGEN",
+        "SAME_ANGLE_DEPTH_MODEL_FILE",
         "SAME_ANGLE_FLOOR_MODEL_FILE",
         "UV_NO_SYNC"
       ]

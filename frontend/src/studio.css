@@ -258,6 +258,10 @@ h2 {
   user-select: none;
 }
 
+.depth-mask-overlay {
+  opacity: 0.62;
+}
+
 .place-point {
   background: transparent;
   border: 0;

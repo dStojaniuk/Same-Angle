@@ -30,6 +30,8 @@ type PhotoViewportProps = {
   comparison: { url: string; split: number } | null;
   grid?: { corners: Point[]; locked: boolean };
   styleRegions?: { points: Point[]; kind: "editable" | "protected" }[];
+  depthOverlay?: Blob;
+  maxOutlinePoints?: number;
   annotations?: {
     lines: { points: [Point, Point]; kind: "fit" | "mark" | "check" }[];
     start: Point | null;
@@ -65,12 +67,15 @@ export function PhotoViewport({
   bedPreview,
   annotations,
   styleRegions,
+  depthOverlay,
+  maxOutlinePoints = MAX_OUTLINE_POINTS,
 }: PhotoViewportProps) {
   const [preview, setPreview] = useState<{ points: Point[]; base: Point[] } | null>(null);
   const [bedCursor, setBedCursor] = useState<Point | null>(null);
   const [edgeCursor, setEdgeCursor] = useState<Point | null>(null);
 
   const frame = useRef<HTMLDivElement>(null);
+  const depthPreview = useRef<HTMLImageElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const addPoint = useRef<HTMLButtonElement>(null);
   const pan = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(
@@ -89,6 +94,14 @@ export function PhotoViewport({
   const mask = grid ? outline : visiblePoints;
   const points = mask.map(({ x, y }) => `${x},${y}`).join(" ");
   const sizing = { "--image-ratio": photo.width / photo.height, "--zoom": zoom } as CSSProperties;
+
+  useEffect(() => {
+    const image = depthPreview.current;
+    if (!image || !depthOverlay) return;
+    const url = URL.createObjectURL(depthOverlay);
+    image.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [depthOverlay]);
 
   useEffect(() => {
     const current = drag.current;
@@ -202,6 +215,14 @@ export function PhotoViewport({
               ))}
             </svg>
           )}
+          {depthOverlay && (
+            <img
+              className="photo-layer depth-mask-overlay"
+              ref={depthPreview}
+              alt=""
+              draggable={false}
+            />
+          )}
           {editing && (
             <>
               {!grid && tool === "points" && (
@@ -210,7 +231,7 @@ export function PhotoViewport({
                   className="place-point"
                   ref={addPoint}
                   aria-label={styleRegions ? "Add mask point" : "Add floor point"}
-                  disabled={outline.length >= MAX_OUTLINE_POINTS}
+                  disabled={outline.length >= maxOutlinePoints}
                   aria-describedby={styleRegions ? "style-mask-help" : "outline-help"}
                   onClick={(event) => {
                     const point = event.detail

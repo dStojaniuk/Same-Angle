@@ -13,6 +13,11 @@ export class FloorGeometryError extends Error {
   }
 }
 
+export type FloorProtection = {
+  regions: Point[][];
+  depthMask: Blob | null;
+};
+
 async function floorPhotoForm(photo: RoomPhoto, signal: AbortSignal) {
   const workingPhoto = await fetch(photo.url, { signal });
   if (!workingPhoto.ok) throw new Error("The photo for rendering could not be read.");
@@ -40,21 +45,38 @@ export async function suggestFloor(
   };
 }
 
+export async function suggestFloorProtection(
+  photo: RoomPhoto,
+  outline: Point[],
+  signal: AbortSignal,
+): Promise<Blob | null> {
+  const form = await floorPhotoForm(photo, signal);
+  form.set("plan", JSON.stringify({ outline: outline.map(({ x, y }) => [x, y]) }));
+  const response = await fetch("/api/floor-depth-hint", { method: "POST", body: form, signal });
+  if (response.status === 204) return null;
+  return readRenderedPng(response);
+}
+
 export async function renderFloor(
   photo: RoomPhoto,
   outline: Point[],
   surface: Point[] | { projection: FloorProjection },
   signal: AbortSignal,
   prompt?: string,
+  protection?: FloorProtection,
 ): Promise<Blob> {
   const form = await floorPhotoForm(photo, signal);
   if (prompt !== undefined) form.set("prompt", prompt);
+  if (protection?.depthMask) form.set("protection", protection.depthMask, "protection.png");
   form.set(
     "plan",
     JSON.stringify({
       width: photo.width,
       height: photo.height,
       outline: outline.map(({ x, y }) => [x, y]),
+      ...(protection && {
+        protected: protection.regions.map((region) => region.map(({ x, y }) => [x, y])),
+      }),
       ...(Array.isArray(surface) ? { corners: surface.map(({ x, y }) => [x, y]) } : surface),
     }),
   );

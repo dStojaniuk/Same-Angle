@@ -5,7 +5,8 @@ import { BedControls, BedViews } from "./BedPreview";
 import { CalibrationEditor } from "./CalibrationEditor";
 import { createCameraProjection, type FloorPoint } from "./camera";
 import { changeDraft, startHistory, type FloorDraft } from "./floorDraft";
-import { FloorGeometryError, renderFloor, suggestFloor } from "./floorRender";
+import { FloorMaskReview } from "./FloorMaskReview";
+import { FloorGeometryError, renderFloor, suggestFloor, type FloorProtection } from "./floorRender";
 import { MAX_OUTLINE_POINTS, type Point } from "./outline";
 import { initialGrid, projectFloor } from "./perspective";
 import { usePerspectiveReview } from "./PerspectiveReview";
@@ -27,6 +28,7 @@ type EditorMode =
   | { kind: "calibration" }
   | { kind: "style" }
   | { kind: "quick" }
+  | { kind: "floor-mask-review" }
   | { kind: "comparison"; url: string; source: "sample" | "render" };
 type FocusTarget =
   | "grid"
@@ -84,6 +86,10 @@ export function RoomEditor({
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
   const [floorPrompt, setFloorPrompt] = useState("");
+  const [reviewedMask, setReviewedMask] = useState<{
+    outline: Point[];
+    protection: FloorProtection;
+  }>();
 
   const views = useBedViews(photo);
 
@@ -93,6 +99,7 @@ export function RoomEditor({
   const lastDraft = useRef(draft);
 
   const { outline } = draft;
+  const protection = reviewedMask?.outline === outline ? reviewedMask.protection : undefined;
   const { bed } = layout;
   const mode =
     editorMode.kind === "grid" && outline.length < 3 ? ({ kind: "outline" } as const) : editorMode;
@@ -115,6 +122,8 @@ export function RoomEditor({
   const comparison = mode.kind === "comparison" ? { url: mode.url, split: review.split } : null;
   const grid = mode.kind === "grid" ? { corners, locked: rendering } : undefined;
   const showFloorSave = mode.kind !== "bed";
+  const showStudio =
+    mode.kind !== "calibration" && mode.kind !== "style" && mode.kind !== "floor-mask-review";
   const showPlan = mode.kind === "bed" && planOpen;
   const viewportPhoto = mode.kind === "bed" ? views.activePhoto : photo;
   const camera = mode.kind === "bed" ? createCameraProjection(viewportPhoto, views.settings) : null;
@@ -305,6 +314,7 @@ export function RoomEditor({
         geometry.corners,
         controller.signal,
         prompt,
+        geometry.outline === outline ? protection : undefined,
       );
       if (request.current !== controller) return;
 
@@ -393,7 +403,19 @@ export function RoomEditor({
         photo={photo}
         onBack={() => changeMode({ kind: "outline" }, "style")}
       />
-      <div className="studio-heading" hidden={mode.kind === "calibration" || mode.kind === "style"}>
+      {mode.kind === "floor-mask-review" && (
+        <FloorMaskReview
+          photo={photo}
+          outline={outline}
+          protection={protection}
+          onSave={(approved) => {
+            setReviewedMask({ outline, protection: approved });
+            changeMode({ kind: "quick" }, "quick");
+          }}
+          onBack={() => changeMode({ kind: "quick" }, "quick")}
+        />
+      )}
+      <div className="studio-heading" hidden={!showStudio}>
         <h1 ref={headingRef} tabIndex={-1}>
           Room editor
         </h1>
@@ -430,7 +452,7 @@ export function RoomEditor({
         </div>
       </div>
 
-      <div className="studio-layout" hidden={mode.kind === "calibration" || mode.kind === "style"}>
+      <div className="studio-layout" hidden={!showStudio}>
         <section className="canvas" aria-label="Photo workspace" hidden={showPlan}>
           <div className="canvas-header">
             <div className="photo-details">
@@ -559,6 +581,13 @@ export function RoomEditor({
                   >
                     Adjust grid
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => changeMode({ kind: "floor-mask-review" }, "quick")}
+                  >
+                    Review floor mask
+                  </button>
                 </div>
               )}
             </>
@@ -658,6 +687,16 @@ export function RoomEditor({
                   />
                 </label>
                 <p>Light oak · rendered locally on this photo.</p>
+                {outline.length >= 3 && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={rendering}
+                    onClick={() => changeMode({ kind: "floor-mask-review" }, "quick")}
+                  >
+                    Review floor mask
+                  </button>
+                )}
                 {renderError && (
                   <p className="field-error" role="alert">
                     {renderError}

@@ -17,6 +17,41 @@ PLAN = """{
 FIXTURES = Path(__file__).resolve().parents[2] / "frontend" / "tests" / "fixtures"
 
 
+def test_floor_export_keeps_user_and_depth_protection() -> None:
+    source_color = (89, 73, 62, 210)
+    original = BytesIO()
+    Image.new("RGBA", (64, 64), source_color).save(original, "PNG")
+    original.seek(0)
+    mask = Image.new("RGBA", (64, 64))
+    mask.paste((255, 139, 38, 255), (26, 40, 30, 45))
+    protected = BytesIO()
+    mask.save(protected, "PNG")
+    protected.seek(0)
+    plan = loads(PLAN)
+    plan["protected"] = [[[44, 37], [48, 37], [48, 54], [44, 54]]]
+
+    response = api.render_photo(
+        UploadFile(original), dumps(plan), protection=UploadFile(protected)
+    )
+
+    with Image.open(BytesIO(response.body)) as result:
+        assert result.getpixel((27, 42)) == source_color
+        assert result.getpixel((45, 50)) == source_color
+        assert result.getpixel((32, 11)) == source_color
+        assert result.getpixel((34, 50)) != source_color
+
+
+def test_floor_export_rejects_protection_for_a_different_photo_size() -> None:
+    original, protected = BytesIO(), BytesIO()
+    Image.new("RGB", (64, 64)).save(original, "PNG")
+    Image.new("RGBA", (63, 64)).save(protected, "PNG")
+    original.seek(0)
+    protected.seek(0)
+    with pytest.raises(HTTPException, match="matching the photo") as error:
+        api.render_photo(UploadFile(original), PLAN, protection=UploadFile(protected))
+    assert error.value.status_code == 422
+
+
 @pytest.mark.parametrize(
     "name", ["grayscale-16bit.png", "linear-gamma.png", "animated-room.png"]
 )

@@ -226,10 +226,11 @@ def render_floor(
     outline: Sequence[PixelPoint],
     corners: Sequence[PixelPoint],
     texture: Image.Image,
+    protection: Image.Image | None = None,
 ) -> Image.Image:
     """Replace the outlined area in oriented photo coordinates and preserve the other pixels."""
     inverse = _floor_mapping(original.size, outline, corners)
-    return _render_mapped_floor(original, outline, inverse, texture)
+    return _render_mapped_floor(original, outline, inverse, texture, protection)
 
 
 def render_calibrated_floor(
@@ -258,9 +259,12 @@ def _render_mapped_floor(
     outline: Sequence[PixelPoint],
     inverse: Matrix,
     texture: Image.Image,
+    protection: Image.Image | None = None,
 ) -> Image.Image:
     validate_polygon(outline)
     mask = rasterize_polygon(original.size, outline)
+    if protection is not None:
+        mask = ImageChops.subtract(mask, protection)
     if mask.getbbox() is None:
         raise FloorGeometryError("outline", "Draw an outline that covers floor pixels.")
 

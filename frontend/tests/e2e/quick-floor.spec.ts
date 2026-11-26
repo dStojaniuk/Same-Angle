@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 async function uploadRoom(page: Page, floor: "trapezoid" | "rectangle" | "none") {
   const png = await page.evaluate((shape) => {
@@ -34,6 +35,86 @@ async function applyOak(page: Page) {
   await page.getByLabel("Floor prompt").fill("Zmień podłogę na jasny dąb.");
   await page.getByRole("button", { name: "Apply floor edit" }).click();
 }
+
+test("includes only approved depth suggestions and manual protection in the PNG", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await uploadRoom(page, "trapezoid");
+  await page.route("**/api/floor-suggestion", (route) =>
+    route.fulfill({
+      json: {
+        outline: [
+          [62, 85],
+          [132, 85],
+          [185, 143],
+          [12, 143],
+        ],
+        corners: [
+          [62, 85],
+          [132, 85],
+          [185, 143],
+          [12, 143],
+        ],
+      },
+    }),
+  );
+  const mask = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 192;
+    canvas.height = 144;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#ff8b26";
+    context.fillRect(85, 100, 8, 8);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  await page.route("**/api/floor-depth-hint", (route) =>
+    route.fulfill({ contentType: "image/png", body: Buffer.from(mask, "base64") }),
+  );
+  await applyOak(page);
+  await expect(page.getByRole("link", { name: "Download PNG" })).toBeVisible();
+  await page.getByRole("button", { name: "Review floor mask" }).click();
+  await page.getByRole("button", { name: "Suggest protection with depth" }).click();
+  const hint = page.getByRole("checkbox", { name: "Protect the suggested areas" });
+  await expect(hint).not.toBeChecked();
+  await hint.check();
+
+  const photo = page.getByRole("button", { name: "Add mask point" });
+  const frame = (await photo.boundingBox())!;
+  for (const [x, y] of [
+    [121, 106],
+    [130, 106],
+    [130, 116],
+    [121, 116],
+  ]) {
+    await photo.click({ position: { x: (x * frame.width) / 192, y: (y * frame.height) / 144 } });
+  }
+  await page.getByRole("button", { name: "Add protected area" }).click();
+  await page.getByRole("button", { name: "Use mask" }).click();
+  await page.getByRole("button", { name: "Apply floor edit" }).click();
+  const downloadEvent = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download PNG" }).click();
+  const png = await readFile(await (await downloadEvent).path());
+  const colors = await page.evaluate(async (data) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${data}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(image, 0, 0);
+    return [
+      [88, 104],
+      [125, 111],
+      [100, 124],
+    ].map(([x, y]) => Array.from(context.getImageData(x, y, 1, 1).data));
+  }, png.toString("base64"));
+  const floor = [121, 51, 69, 255];
+  expect(colors[0]).toEqual(floor);
+  expect(colors[1]).toEqual(floor);
+  expect(colors[2]).not.toEqual(floor);
+});
 
 test("renders a clear floor from the photo and prompt and can mark the result as a sketch", async ({
   page,
